@@ -1,0 +1,47 @@
+{
+  "name": "opencode-fold-diffs",
+  "version": "0.1.0",
+  "description": "OpenCode TUI plugin: write, edit and apply_patch blocks render folded to their title line, click or ctrl+o to open them.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-tui",
+    "tui",
+    "diff",
+    "collapse",
+    "fold",
+    "transcript",
+    "scrollback"
+  ],
+  "oc-plugin": [
+    "tui"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "exports": {
+    "./tui": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "author": {
+    "name": "Tanner Bruhn",
+    "url": "https://github.com/tannerbruhn"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tannerbruhn/opencode-fold-diffs.git"
+  },
+  "homepage": "https://github.com/tannerbruhn/opencode-fold-diffs#readme",
+  "bugs": {
+    "url": "https://github.com/tannerbruhn/opencode-fold-diffs/issues"
+  },
+  "engines": {
+    "opencode": ">=1.18.27"
+  }
+}
