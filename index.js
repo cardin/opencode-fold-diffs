@@ -1,12 +1,18 @@
-// Fold write / edit / apply_patch blocks in the opencode transcript.
+// Fold write / edit / apply_patch blocks -- and long bash commands -- in the
+// opencode transcript.
 //
-// opencode already collapses bash output to 10 lines and generic tool output to
+// opencode already collapses bash OUTPUT to 10 lines and generic tool output to
 // 3, both with click-to-expand. The three tools that produce the most
 // scrollback -- write, edit and apply_patch -- are the ones it does not touch:
 // they render the whole diff, or the whole written file, forever. The three
 // upstream requests for a setting (#9089 minimal diff display, #14511 a toggle
 // keybind, #19074 collapse tool output) were all closed without one, so this
 // does it from a plugin.
+//
+// The bash command is that same gap seen from the other side: the host trims
+// what a command printed, never the command that printed it, so a heredoc'd
+// throwaway script keeps its full height in the transcript forever. Those fold
+// to their first line, which is the one that says what the thing was.
 //
 // A folded block renders as its title line -- "← Edit src/app.ts +12 −3" --
 // and opens on click, or with ctrl+o for every block at once.
@@ -17,6 +23,8 @@
 //   stats      append "+12 −3 · click to expand" to the title (default true)
 //   folded     new blocks start folded                      (default true)
 //   key        binding that folds/unfolds every block        (default "ctrl+o")
+//   bash       fold long bash commands too                   (default true)
+//   bash_lines rows of the command left visible when folded  (default 1)
 
 const DEFAULTS = {
   lines: 0,
@@ -24,6 +32,8 @@ const DEFAULTS = {
   stats: true,
   folded: true,
   key: "ctrl+o",
+  bash: true,
+  bash_lines: 1,
 }
 
 // BlockTool titles of the file-writing tools, as rendered in the transcript.
@@ -31,6 +41,12 @@ const DEFAULTS = {
 // todowrite, questions and the generic fallback all collapse themselves
 // already, and folding them again would fight the host.
 const TITLES = [/^← Edit /, /^# Wrote /, /^← Patched /, /^# Created /, /^# Deleted /, /^# Moved /]
+
+// A shell block carries no title to match on -- BlockTool renders one only when
+// the tool ran in another workdir -- so it is found by shape instead. Shell
+// wraps its parts in one box whose first child is the command, and the host
+// writes that command with a "$ " in front of it.
+const PROMPT = "$ "
 
 // How often to re-scan when nothing is streaming. Events cover the live case;
 // this catches a session opened from history, whose parts arrive as one batch
@@ -56,6 +72,31 @@ function isDiff(node) {
 
 function isCode(node) {
   return typeof node?.content === "string" && typeof node?.filetype === "string"
+}
+
+// The command text of a bash block, or nothing. The wrapper is the first child
+// with children of its own; a workdir title, when there is one, is a childless
+// text node sitting before it. While the tool is still running the host renders
+// the command inside a Spinner with no "$ ", so a running command is skipped and
+// picked up by a later sweep once it settles.
+function shellCommand(block) {
+  const kids = children(block)
+  if (!kids.length || kids.length > 3) return
+  for (const child of kids) {
+    const inner = children(child)
+    if (!inner.length) continue
+    const text = plain(inner[0])
+    if (typeof text !== "string" || !text.startsWith(PROMPT)) return
+    return { node: inner[0], text }
+  }
+}
+
+// Rows the command occupies, not lines it contains: a single-line command long
+// enough to wrap is exactly the kind worth folding. `height` is the laid-out
+// row count and reads 0 before the first layout, so the line count is the floor.
+function commandRows(node, text) {
+  const height = typeof node?.height === "number" ? node.height : 0
+  return Math.max(text.split("\n").length, height)
 }
 
 function bulk(node, found = []) {
@@ -104,14 +145,14 @@ function blockTitle(node) {
   return TITLES.some((re) => re.test(head)) ? head : undefined
 }
 
-function scan(node, hits = []) {
+function scan(node, hits = [], shell = true) {
   if (!node || node.isDestroyed) return hits
   // A matched block never contains another one, so stop descending.
-  if (blockTitle(node)) {
+  if (blockTitle(node) || (shell && shellCommand(node))) {
     hits.push(node)
     return hits
   }
-  for (const child of children(node)) scan(child, hits)
+  for (const child of children(node)) scan(child, hits, shell)
   return hits
 }
 
@@ -145,6 +186,8 @@ export default {
     const opts = { ...DEFAULTS, ...(options ?? {}) }
     const peek = Math.max(0, Number(opts.lines) || 0)
     const floor = Math.max(0, Number(opts.min_lines) || 0)
+    const shell = opts.bash !== false
+    const shellPeek = Math.max(0, Number(opts.bash_lines) || 0)
 
     // Folded blocks, by their block renderable. WeakMap so a session switch,
     // which destroys the renderables, drops the state with them.
@@ -168,7 +211,7 @@ export default {
         try {
           // Yoga honours a 0 max-height, so the body disappears from layout
           // entirely rather than leaving a gap where it used to be.
-          node.maxHeight = fold ? (index === 0 ? peek : 0) : undefined
+          node.maxHeight = fold ? (index === 0 ? state.peek : 0) : undefined
           node.overflow = fold ? "hidden" : state.overflow[index]
         } catch {}
       })
@@ -177,8 +220,10 @@ export default {
       // around one line of title. Collapse the chrome too so a folded block
       // reads as the single row it now is. The restored values are BlockTool's
       // own (paddingTop/Bottom 1, gap 1) because opentui gives these setters no
-      // getters to read the originals back from.
-      if (peek === 0) {
+      // getters to read the originals back from. Never for a shell block: its
+      // output is a sibling of the command and stays on screen, so the chrome
+      // is still holding something up.
+      if (state.chrome) {
         try {
           state.block.gap = fold ? 0 : 1
           state.block.paddingTop = fold ? 0 : 1
@@ -198,9 +243,9 @@ export default {
       if (plain(state.title.node) !== next) titles = false
     }
 
-    function adopt(block) {
+    function adoptDiff(block) {
       const title = blockTitle(block)
-      if (!title) return
+      if (!title) return false
       const kids = children(block)
       // Everything after the title that actually carries a diff or a file body.
       // Diagnostics and the error line carry neither, so an edit that broke the
@@ -213,9 +258,9 @@ export default {
         body.push(child)
         heavy.push(...found)
       }
-      if (!body.length) return
+      if (!body.length) return false
       const stats = summarise(heavy)
-      if (stats.size < floor) return
+      if (stats.size < floor) return false
 
       const head = kids[0]
       const state = {
@@ -224,6 +269,8 @@ export default {
         overflow: body.map((node) => node.overflow),
         title: plain(head) === title ? { node: head, text: title } : undefined,
         suffix: `${stats.label} · click to expand`,
+        peek,
+        chrome: peek === 0,
         folded: false,
       }
       known.set(block, state)
@@ -235,13 +282,50 @@ export default {
       }
 
       if (folding) apply(state, true)
+      return true
+    }
+
+    function adoptShell(block) {
+      const found = shellCommand(block)
+      if (!found) return
+      if (commandRows(found.node, found.text) < floor) return
+
+      const state = {
+        block,
+        body: [found.node],
+        overflow: [found.node.overflow],
+        title: undefined,
+        peek: shellPeek,
+        chrome: false,
+        folded: false,
+      }
+      known.set(block, state)
+
+      // The block's own onMouseUp belongs to the host here -- for a bash block
+      // it is what expands the collapsed OUTPUT -- and opentui declares the
+      // handler as a setter with no getter, so it cannot be read back and
+      // chained. Take the command text instead and stop the event on it:
+      // clicking the command folds the command, clicking anywhere else in the
+      // block still does exactly what it did before this plugin loaded.
+      found.node.onMouseUp = (event) => {
+        if (api.renderer.getSelection?.()?.getSelectedText?.()) return
+        apply(state, !state.folded)
+        event?.stopPropagation?.()
+      }
+
+      if (folding) apply(state, true)
+    }
+
+    function adopt(block) {
+      if (adoptDiff(block)) return
+      if (shell) adoptShell(block)
     }
 
     function sweep() {
       if (api.route.current.name !== "session") return
       const box = transcript()
       if (!box) return
-      for (const block of scan(box)) {
+      for (const block of scan(box, [], shell)) {
         if (known.has(block)) continue
         adopt(block)
       }
@@ -252,7 +336,7 @@ export default {
       const box = transcript()
       if (!box) return 0
       let count = 0
-      for (const block of scan(box)) {
+      for (const block of scan(box, [], shell)) {
         const state = known.get(block)
         if (!state || state.folded === fold) continue
         apply(state, fold)

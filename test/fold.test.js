@@ -263,3 +263,130 @@ test("binds ctrl+o by default and nothing when asked", async (t) => {
   await plugin.tui(b.api, { key: "" })
   assert.equal(b.binding(), undefined)
 })
+
+// --- bash commands -------------------------------------------------------
+//
+// Shell wraps its parts in one box: the "$ command" text, the output, and the
+// host's own expand hint when that output overflowed. The block carries no
+// title unless the tool ran in another workdir.
+function shellBlock({ lines = 20, output = "ok", hint = true, running = false, title } = {}) {
+  const body = Array.from({ length: lines }, (_, i) => `print(${i})`).join("\n")
+  const cmd = new Text(running ? body : "$ " + body)
+  const inner = [cmd]
+  if (output) inner.push(new Text(output))
+  if (hint) inner.push(new Text("Click to expand"))
+  const wrap = new Box(inner, { gap: 1 })
+  const block = new Box(title ? [new Text(title), wrap] : [wrap])
+  return { block, cmd, wrap }
+}
+
+const click = () => {
+  const event = { stopped: 0, stopPropagation() { this.stopped++ } }
+  return event
+}
+
+test("folds a long bash command to its first row", async (t) => {
+  const { block, cmd, wrap } = shellBlock()
+  const h = harness(t, [block])
+  await plugin.tui(h.api, {})
+  await settle()
+
+  assert.equal(cmd.maxHeight, 1)
+  assert.equal(cmd.overflow, "hidden")
+  // The output and the host's hint are siblings of the command, not children,
+  // so folding the command leaves both on screen.
+  assert.equal(wrap.kids[1].maxHeight, undefined)
+  assert.equal(wrap.kids[2].maxHeight, undefined)
+  // The block's own handler is the host's output toggle and has no getter to
+  // chain, so it must be left exactly as it was found.
+  assert.equal(block.onMouseUp, undefined)
+  // The chrome holds up the output, so it is not collapsed the way a diff's is.
+  assert.equal(block.gap, undefined)
+})
+
+test("clicking the command toggles it and stops the host seeing the click", async (t) => {
+  const { block, cmd } = shellBlock()
+  const h = harness(t, [block])
+  await plugin.tui(h.api, {})
+  await settle()
+
+  const open = click()
+  cmd.onMouseUp(open)
+  assert.equal(cmd.maxHeight, undefined)
+  assert.equal(open.stopped, 1)
+
+  const shut = click()
+  cmd.onMouseUp(shut)
+  assert.equal(cmd.maxHeight, 1)
+  assert.equal(shut.stopped, 1)
+  assert.equal(block.onMouseUp, undefined)
+})
+
+test("a drag ending on the command is a selection, not a click", async (t) => {
+  const { block, cmd } = shellBlock()
+  const h = harness(t, [block])
+  h.api.renderer.getSelection = () => ({ getSelectedText: () => "print(3)" })
+  await plugin.tui(h.api, {})
+  await settle()
+
+  cmd.onMouseUp(click())
+  assert.equal(cmd.maxHeight, 1)
+})
+
+test("short and still-running commands are left alone", async (t) => {
+  const short = shellBlock({ lines: 3 })
+  const running = shellBlock({ running: true })
+  const h = harness(t, [short.block, running.block])
+  await plugin.tui(h.api, {})
+  await settle()
+
+  assert.equal(short.cmd.maxHeight, undefined)
+  assert.equal(running.cmd.maxHeight, undefined)
+  assert.equal(running.cmd.onMouseUp, undefined)
+})
+
+test("a workdir title does not hide the command", async (t) => {
+  const { block, cmd } = shellBlock({ title: "# Running in packages/tui" })
+  const h = harness(t, [block])
+  await plugin.tui(h.api, {})
+  await settle()
+
+  assert.equal(cmd.maxHeight, 1)
+  assert.equal(block.kids[0].plainText, "# Running in packages/tui")
+})
+
+test("bash: false leaves commands to the host", async (t) => {
+  const { block, cmd } = shellBlock()
+  const h = harness(t, [block])
+  await plugin.tui(h.api, { bash: false })
+  await settle()
+
+  assert.equal(cmd.maxHeight, undefined)
+  assert.equal(cmd.onMouseUp, undefined)
+})
+
+test("bash_lines sets how much of the command survives", async (t) => {
+  const { block, cmd } = shellBlock()
+  const h = harness(t, [block])
+  await plugin.tui(h.api, { bash_lines: 3 })
+  await settle()
+
+  assert.equal(cmd.maxHeight, 3)
+})
+
+test("ctrl+o folds and unfolds commands alongside diffs", async (t) => {
+  const edit = editBlock()
+  const shell = shellBlock()
+  const h = harness(t, [edit.block, shell.block])
+  await plugin.tui(h.api, {})
+  await settle()
+
+  h.run()
+  assert.equal(edit.body.maxHeight, undefined)
+  assert.equal(shell.cmd.maxHeight, undefined)
+  assert.match(h.toasts.at(-1).message, /Unfolded 2 blocks/)
+
+  h.run()
+  assert.equal(edit.body.maxHeight, 0)
+  assert.equal(shell.cmd.maxHeight, 1)
+})
