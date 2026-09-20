@@ -27,12 +27,18 @@
 // { id, setup } definition; Plugin.define() is an identity helper, so the
 // shape is the same without a runtime dependency on @opencode/plugin.
 
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 const DEFAULTS = {
   lines: 0,
   min_lines: 6,
   stats: true,
   folded: true,
-  key: "ctrl+o",
+  // No binding by default: ctrl+o belongs to OpenCode's "Open recent sessions
+  // and projects". Set `key` to opt in to a fold/unfold-all shortcut.
+  key: "",
   // V2 collapses a long command to two lines and its output to ten, both with
   // click-to-expand, so the command is no longer the "the host never trims it"
   // gap it was in V1. Off by default; turn on to tighten it to one line.
@@ -47,7 +53,17 @@ const DEFAULTS = {
 const LABELS = ["# Wrote", "← Edit", "← Patched", "# Created", "# Deleted", "# Moved"];
 
 function isLabel(text) {
-  return LABELS.some((label) => text === label || text.startsWith(label + " "));
+  return LABELS.includes(text);
+}
+
+// The stats suffix this plugin appends to a folded header. Stripping it makes
+// re-adopting a block idempotent: a hot reload rebuilds the plugin, re-walks the
+// same transcript and must not append the suffix a second time.
+const SUFFIX = / (?:\d+ lines?|\+\d+ −\d+) · click to expand$/;
+
+function baseLabel(text) {
+  const match = SUFFIX.exec(text);
+  return match ? text.slice(0, match.index) : text;
 }
 
 // A shell block carries no header of its own, and V2 writes the command with a
@@ -155,8 +171,10 @@ function blockHeader(block) {
     // have a sibling after it: that is the path value.
     for (let i = 0; i < rowKids.length - 1; i++) {
       const label = plain(rowKids[i]);
-      if (typeof label !== "string" || !isLabel(label)) continue;
-      return { row, node: rowKids[i], label };
+      if (typeof label !== "string") continue;
+      const base = baseLabel(label);
+      if (!isLabel(base)) continue;
+      return { row, node: rowKids[i], label: base };
     }
   }
   return;
@@ -195,6 +213,26 @@ function summarise(nodes) {
   }
   if (diffs) return { size: added + removed, label: `+${added} −${removed}` };
   return { size: lines, label: `${lines} ${lines === 1 ? "line" : "lines"}` };
+}
+
+// Debug-only: one line per renderable, for aligning the matcher with a real
+// transcript when a live run reports `blocks: 0`. Truncated so a big session
+// still writes quickly.
+function dumpNode(node, depth, lines, limit) {
+  if (!node || node.isDestroyed || lines.length >= limit) return;
+  const kids = children(node);
+  const text = plain(node);
+  const tags = [];
+  if (isDiff(node)) tags.push("diff");
+  if (isCode(node)) tags.push("code");
+  if (node.stickyScroll === true) tags.push("sticky");
+  lines.push(
+    `${"  ".repeat(depth)}${node.constructor?.name ?? "node"} kids=${kids.length}` +
+      (typeof text === "string" ? ` text=${JSON.stringify(text.slice(0, 80))}` : "") +
+      (tags.length ? ` [${tags.join(",")}]` : "") +
+      ` maxH=${node.maxHeight} ov=${node.overflow}`,
+  );
+  for (const kid of kids) dumpNode(kid, depth + 1, lines, limit);
 }
 
 export const PLUGIN_ID = "opencode-fold-diffs";
@@ -417,12 +455,20 @@ export default {
               const box = transcript();
               const blocks = box ? scan(box, [], shell) : [];
               const folded = blocks.filter((block) => known.get(block)?.folded).length;
+              let dump;
+              try {
+                const lines = [];
+                dumpNode(box ?? context.renderer.root, 0, lines, 600);
+                dump = join(tmpdir(), "opencode-fold-diffs-tree.txt");
+                writeFileSync(dump, lines.join("\n"));
+              } catch {}
               context.ui.toast.show({
                 title: "opencode-fold-diffs",
                 variant: box ? "info" : "warning",
-                duration: 4000,
+                duration: 5000,
                 message: box
-                  ? `transcript: yes · blocks: ${blocks.length} · folded: ${folded} · stats: ${titles ? "on" : "off"}`
+                  ? `transcript: yes · blocks: ${blocks.length} · folded: ${folded} · stats: ${titles ? "on" : "off"}` +
+                    (dump ? ` · dump: ${dump}` : "")
                   : "transcript: not found — open a session first",
               });
             },

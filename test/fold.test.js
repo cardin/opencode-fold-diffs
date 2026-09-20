@@ -302,12 +302,21 @@ test("stats: false leaves the header alone", async (t) => {
   assert.equal(row.kids[0].plainText, "← Edit");
 });
 
-test("binds ctrl+o by default and nothing when asked", async (t) => {
-  const a = harness(t, []);
-  assert.equal(a.command().bind, "ctrl+o");
+test("re-adopting a header that already carries the suffix does not double it", async (t) => {
+  const { block, row, body } = editBlock("← Edit +4 −2 · click to expand", "src/app.ts");
+  const h = harness(t, [block]);
+  await settle();
 
-  const b = harness(t, [], { key: "" });
-  assert.equal(b.command().bind, false);
+  assert.equal(body.maxHeight, 0);
+  assert.equal(row.kids[0].plainText, "← Edit +4 −2 · click to expand");
+});
+
+test("binds nothing by default and only what it is asked to", async (t) => {
+  const a = harness(t, []);
+  assert.equal(a.command().bind, false, "ctrl+o is left to open.menu");
+
+  const b = harness(t, [], { key: "ctrl+shift+d" });
+  assert.equal(b.command().bind, "ctrl+shift+d");
 });
 
 test("owns its command layer through the app slot", async (t) => {

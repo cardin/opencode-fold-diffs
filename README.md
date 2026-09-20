@@ -1,6 +1,6 @@
 # opencode-fold-diffs
 
-**Every `write` and `edit` dumps the whole file or the whole diff into your transcript, and stays there.** This plugin folds those blocks down to their header line — `# Wrote src/app.ts 40 lines · click to expand` — and opens them again on click, or `ctrl+o` for all of them at once.
+**Every `write` and `edit` dumps the whole file or the whole diff into your transcript, and stays there.** This plugin folds those blocks down to their header line — `# Wrote 40 lines · click to expand  src/app.ts` — and opens them again on click, or with a fold/unfold-all key if you configure one.
 
 This branch targets **OpenCode V2** (the `@opencode/cli` 2.x line, `opencode v2.0.x`). The V1 plugin implementation does not run in V2; see [Migrating from V1](#migrating-from-v1).
 
@@ -31,7 +31,7 @@ After:
 ← Edit +12 −3 · click to expand  src/session/index.ts
 ```
 
-Click the row to open it. `ctrl+o` folds or unfolds every block in the session, and sets what newly arriving blocks do — same as a verbose toggle.
+Click the row to open it. If you set the `key` option, that binding folds or unfolds every block in the session and sets what newly arriving blocks do — same as a verbose toggle. By default there is no binding, so OpenCode's own shortcuts (including `ctrl+o`) are left alone.
 
 ## Install
 
@@ -91,11 +91,11 @@ Clone this repository and point the plugin entry at the checkout. The package sh
 | `min_lines` | `6` | Blocks with fewer changed lines than this are left alone — a two-line edit is already its own summary. |
 | `stats` | `true` | Append `+12 −3 · click to expand` to the header. |
 | `folded` | `true` | Whether blocks start folded. `false` gives you only the toggle. |
-| `key` | `"ctrl+o"` | Binding for fold/unfold-all. Set to `""` for none. |
+| `key` | `""` | Optional binding for fold/unfold-all. Empty by default so no OpenCode shortcut is overridden; set e.g. `"ctrl+shift+d"` to opt in. |
 | `bash` | `false` | Fold long bash commands too. Off by default on V2 because the host already trims them to two lines. |
 | `bash_lines` | `1` | Rows of the command left showing when folded. `1` keeps the line that says what the thing was. |
 
-> `ctrl+o` is also the default binding for OpenCode's **Open recent sessions and projects** (`open.menu`). The plugin registers its command at a higher layer priority, but if the binding does not take, or you want `open.menu` back, set `key` to something else.
+> `ctrl+o` belongs to OpenCode's **Open recent sessions and projects** (`open.menu`), so this plugin does not bind it. Choose an unused key for the `key` option.
 
 ## What it does not touch
 
@@ -133,7 +133,7 @@ V1 plugin implementations do not run in V2. This branch made these changes:
 1. Restart so the plugin loads: `opencode service restart`, then relaunch the TUI.
 2. Confirm it loaded: `/plugins` should list `opencode-fold-diffs` by id, and `Ctrl+P` → **Fold / unfold file diffs** should be in the palette.
 3. Ask the agent for a small edit. The block should render as a single header row, `← Edit +2 −1 · click to expand  path`. Click it to open, click again to close.
-4. Press the toggle key (`ctrl+o` by default) to fold or unfold every block in the session.
+4. If you configured a `key`, press it to fold or unfold every block in the session. Otherwise use the palette command **Fold / unfold file diffs**.
 5. If nothing folds, run `Ctrl+P` → **Fold diffs: diagnose**. The toast reports what the plugin can see:
 
 | Result | Meaning |
@@ -145,7 +145,7 @@ V1 plugin implementations do not run in V2. This branch made these changes:
 
 ## Status
 
-Written against **opencode v2.0.10**. The tree-walking, block matching, fold/unfold and toggle logic run green against a mock renderer tree shaped like V2's (`node --test`). The mock is not the real transcript, so the first run against a live session is still worth checking: a completed `edit`/`write` folds to its header, a click reopens it, `ctrl+o` flips them all, and a permission dialog still shows its diff in full.
+Written against **opencode v2.0.10**. The tree-walking, block matching, fold/unfold and toggle logic run green against a mock renderer tree shaped like V2's (`node --test`). The mock is not the real transcript, so the first run against a live session is still worth checking: a completed `edit`/`write` folds to its header, a click reopens it, the toggle flips them all, and a permission dialog still shows its diff in full.
 
 ## License
 
