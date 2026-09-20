@@ -1,7 +1,7 @@
 {
   "name": "opencode-fold-diffs",
-  "version": "0.2.0",
-  "description": "OpenCode TUI plugin: write, edit, apply_patch and long bash commands render folded to their title line, click or ctrl+o to open them.",
+  "version": "0.3.0",
+  "description": "OpenCode V2 TUI plugin: write, edit and apply_patch blocks render folded to their header line, click or ctrl+o to open them.",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -15,11 +15,8 @@
     "transcript",
     "scrollback"
   ],
-  "oc-plugin": [
-    "tui"
-  ],
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "exports": {
     "./tui": "./index.js"
@@ -42,6 +39,6 @@
     "url": "https://github.com/tannerbruhn/opencode-fold-diffs/issues"
   },
   "engines": {
-    "opencode": ">=1.18.27"
+    "opencode": ">=2.0.0"
   }
 }

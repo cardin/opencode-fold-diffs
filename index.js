@@ -1,30 +1,31 @@
-// Fold write / edit / apply_patch blocks -- and long bash commands -- in the
-// opencode transcript.
+// Fold write / edit / apply_patch blocks -- and, optionally, long bash commands
+// -- in the OpenCode V2 transcript.
 //
-// opencode already collapses bash OUTPUT to 10 lines and generic tool output to
-// 3, both with click-to-expand. The three tools that produce the most
-// scrollback -- write, edit and apply_patch -- are the ones it does not touch:
-// they render the whole diff, or the whole written file, forever. The three
-// upstream requests for a setting (#9089 minimal diff display, #14511 a toggle
-// keybind, #19074 collapse tool output) were all closed without one, so this
-// does it from a plugin.
+// opencode already collapses bash OUTPUT to ten lines and (since V2) also trims
+// a long bash COMMAND to two, both with click-to-expand. The file tools that
+// produce the most scrollback -- write, edit and apply_patch -- are the ones it
+// does not touch: they render the whole diff, or the whole written file,
+// forever. The three upstream requests for a setting (#9089 minimal diff
+// display, #14511 a toggle keybind, #19074 collapse tool output) were all
+// closed without one, so this does it from a plugin.
 //
-// The bash command is that same gap seen from the other side: the host trims
-// what a command printed, never the command that printed it, so a heredoc'd
-// throwaway script keeps its full height in the transcript forever. Those fold
-// to their first line, which is the one that says what the thing was.
+// A folded block renders as its header line -- "# Wrote 40 lines · click to
+// expand  src/app.ts" -- and opens on click, or with ctrl+o for every block at
+// once.
 //
-// A folded block renders as its title line -- "← Edit src/app.ts +12 −3" --
-// and opens on click, or with ctrl+o for every block at once.
-//
-// Options (tui.json -> ["opencode-fold-diffs", { ... }]):
+// Options (cli.json -> ["opencode-fold-diffs", { ... }] or opencode.json(c)):
 //   lines      lines of the body left visible when folded  (default 0, title only)
 //   min_lines  leave blocks with fewer content lines alone  (default 6)
-//   stats      append "+12 −3 · click to expand" to the title (default true)
+//   stats      append "40 lines · click to expand" to the header (default true)
 //   folded     new blocks start folded                      (default true)
 //   key        binding that folds/unfolds every block        (default "ctrl+o")
-//   bash       fold long bash commands too                   (default true)
+//   bash       fold long bash commands too                   (default false on V2)
 //   bash_lines rows of the command left visible when folded  (default 1)
+//
+// The plugin is loaded by the OpenCode V2 CLI from the package's "./tui" export
+// and receives a plugin Context (see @opencode/plugin/tui). It exports a plain
+// { id, setup } definition; Plugin.define() is an identity helper, so the
+// shape is the same without a runtime dependency on @opencode/plugin.
 
 const DEFAULTS = {
   lines: 0,
@@ -32,34 +33,39 @@ const DEFAULTS = {
   stats: true,
   folded: true,
   key: "ctrl+o",
-  bash: true,
+  // V2 collapses a long command to two lines and its output to ten, both with
+  // click-to-expand, so the command is no longer the "the host never trims it"
+  // gap it was in V1. Off by default; turn on to tighten it to one line.
+  bash: false,
   bash_lines: 1,
+};
+
+// Header labels of the file-writing tools, as V2 renders them. Unlike V1, V2
+// splits a block header into a label text node ("# Wrote", "← Edit", ...) and a
+// separate path node, so these match the label alone. The trailing alternation
+// keeps a header that already carries the stats suffix matching on later scans.
+const LABELS = ["# Wrote", "← Edit", "← Patched", "# Created", "# Deleted", "# Moved"];
+
+function isLabel(text) {
+  return LABELS.some((label) => text === label || text.startsWith(label + " "));
 }
 
-// BlockTool titles of the file-writing tools, as rendered in the transcript.
-// Matching the title is what keeps this off every other block tool: bash,
-// todowrite, questions and the generic fallback all collapse themselves
-// already, and folding them again would fight the host.
-const TITLES = [/^← Edit /, /^# Wrote /, /^← Patched /, /^# Created /, /^# Deleted /, /^# Moved /]
-
-// A shell block carries no title to match on -- BlockTool renders one only when
-// the tool ran in another workdir -- so it is found by shape instead. Shell
-// wraps its parts in one box whose first child is the command, and the host
-// writes that command with a "$ " in front of it.
-const PROMPT = "$ "
+// A shell block carries no header of its own, and V2 writes the command with a
+// "$ " in front of it.
+const PROMPT = "$ ";
 
 // How often to re-scan when nothing is streaming. Events cover the live case;
 // this catches a session opened from history, whose parts arrive as one batch
 // before any event this plugin sees.
-const SWEEP_MS = 2000
+const SWEEP_MS = 2000;
 
 function children(node) {
-  return typeof node?.getChildren === "function" ? node.getChildren() : []
+  return typeof node?.getChildren === "function" ? node.getChildren() : [];
 }
 
 function plain(node) {
-  const value = node?.plainText
-  return typeof value === "string" ? value : undefined
+  const value = node?.plainText;
+  return typeof value === "string" ? value : undefined;
 }
 
 // Duck-typing, not instanceof: the classes live in the host's bundled
@@ -67,228 +73,238 @@ function plain(node) {
 // renderable is the only thing in the tree carrying a `diff` string, and a code
 // renderable the only thing pairing `content` with `filetype`.
 function isDiff(node) {
-  return typeof node?.diff === "string"
+  return typeof node?.diff === "string";
 }
 
 function isCode(node) {
-  return typeof node?.content === "string" && typeof node?.filetype === "string"
+  return typeof node?.content === "string" && typeof node?.filetype === "string";
 }
 
-// The command text of a bash block, or nothing. The wrapper is the first child
-// with children of its own; a workdir title, when there is one, is a childless
-// text node sitting before it. While the tool is still running the host renders
-// the command inside a Spinner with no "$ ", so a running command is skipped and
-// picked up by a later sweep once it settles.
+// The command text of a bash block, or nothing. V2 wraps the command and its
+// output in one box, and the command is the first child of that box prefixed
+// with "$ ". While the tool is still running the host renders the command in a
+// row next to a spinner, so a running command is skipped and picked up by a
+// later sweep once it settles.
 function shellCommand(block) {
-  const kids = children(block)
-  if (!kids.length || kids.length > 3) return
-  for (const child of kids) {
-    const inner = children(child)
-    if (!inner.length) continue
-    const text = plain(inner[0])
-    if (typeof text !== "string" || !text.startsWith(PROMPT)) return
-    return { node: inner[0], text }
+  for (const child of children(block)) {
+    const inner = children(child);
+    if (!inner.length) continue;
+    // solid's <Show> leaves childless placeholders, so scan rather than assume
+    // the command is the first grandchild.
+    for (const node of inner) {
+      const text = plain(node);
+      if (typeof text === "string" && text.startsWith(PROMPT)) return { node, text };
+    }
   }
+  return;
 }
 
 // Rows the command occupies, not lines it contains: a single-line command long
 // enough to wrap is exactly the kind worth folding. `height` is the laid-out
 // row count and reads 0 before the first layout, so the line count is the floor.
 function commandRows(node, text) {
-  const height = typeof node?.height === "number" ? node.height : 0
-  return Math.max(text.split("\n").length, height)
+  const height = typeof node?.height === "number" ? node.height : 0;
+  return Math.max(text.split("\n").length, height);
 }
 
 function bulk(node, found = []) {
-  if (!node || node.isDestroyed) return found
+  if (!node || node.isDestroyed) return found;
   if (isDiff(node) || isCode(node)) {
-    found.push(node)
-    return found
+    found.push(node);
+    return found;
   }
-  for (const child of children(node)) bulk(child, found)
-  return found
+  for (const child of children(node)) bulk(child, found);
+  return found;
 }
 
 // The transcript is the only scrollbox in the TUI that asks to stick to the
-// bottom (same discriminator opencode-snap-to-bottom uses). Staying inside it
-// is what keeps the permission dialog's diff preview untouched -- you should
-// always see in full what you are about to approve.
+// bottom. Staying inside it is what keeps the permission dialog's diff preview
+// untouched -- you should always see in full what you are about to approve.
 function isTranscript(node) {
   return (
     typeof node?.scrollTo === "function" &&
     typeof node?.scrollHeight === "number" &&
     node.stickyScroll === true &&
     node.stickyStart === "bottom"
-  )
+  );
 }
 
 function findTranscript(node) {
-  if (!node || node.isDestroyed) return
-  if (isTranscript(node)) return node
-  if (typeof node.scrollTo === "function") return
+  if (!node || node.isDestroyed) return;
+  if (isTranscript(node)) return node;
+  if (typeof node.scrollTo === "function") return;
   for (const child of children(node)) {
-    const hit = findTranscript(child)
-    if (hit) return hit
+    const hit = findTranscript(child);
+    if (hit) return hit;
   }
 }
 
-// A BlockTool renders the title text first, then its body. Read the title off
-// the first child; anything else is not one of ours.
-function blockTitle(node) {
-  const kids = children(node)
-  // Title plus at least one body child. The guard also keeps the plain-text
-  // read -- which rebuilds a string every call -- off the leaf nodes, and the
-  // transcript is mostly leaf nodes.
-  if (kids.length < 2) return
-  const head = plain(kids[0])
-  if (!head) return
-  return TITLES.some((re) => re.test(head)) ? head : undefined
+// A V2 BlockTool renders the header first: a row box whose first two children
+// are the label text ("# Wrote") and the path value. Anything else is not one
+// of ours. The row is returned with the label node so a folded header can be
+// restated with its stats.
+function blockHeader(block) {
+  for (const row of children(block)) {
+    const rowKids = children(row);
+    // Label plus the path value. The guard also keeps the plain-text read --
+    // which rebuilds a string every call -- off the leaf nodes, and the
+    // transcript is mostly leaf nodes.
+    if (rowKids.length < 2) continue;
+    // <Show> may leave childless placeholders around the label, so scan the
+    // row for the label rather than assume it is the first child. It must still
+    // have a sibling after it: that is the path value.
+    for (let i = 0; i < rowKids.length - 1; i++) {
+      const label = plain(rowKids[i]);
+      if (typeof label !== "string" || !isLabel(label)) continue;
+      return { row, node: rowKids[i], label };
+    }
+  }
+  return;
 }
 
-function scan(node, hits = [], shell = true) {
-  if (!node || node.isDestroyed) return hits
+function scan(node, hits = [], shell = false) {
+  if (!node || node.isDestroyed) return hits;
   // A matched block never contains another one, so stop descending.
-  if (blockTitle(node) || (shell && shellCommand(node))) {
-    hits.push(node)
-    return hits
+  if (blockHeader(node) || (shell && shellCommand(node))) {
+    hits.push(node);
+    return hits;
   }
-  for (const child of children(node)) scan(child, hits, shell)
-  return hits
+  for (const child of children(node)) scan(child, hits, shell);
+  return hits;
 }
 
 // "+12 −3" from a unified diff, "42 lines" from a written file. Counted off the
 // renderable's own props, so it stays right even for parts the TUI store has
 // already dropped.
 function summarise(nodes) {
-  let added = 0
-  let removed = 0
-  let lines = 0
-  let diffs = 0
+  let added = 0;
+  let removed = 0;
+  let lines = 0;
+  let diffs = 0;
   for (const node of nodes) {
     if (isDiff(node)) {
-      diffs++
+      diffs++;
       for (const line of node.diff.split("\n")) {
-        if (line.startsWith("+++") || line.startsWith("---")) continue
-        if (line.startsWith("+")) added++
-        else if (line.startsWith("-")) removed++
+        if (line.startsWith("+++") || line.startsWith("---")) continue;
+        if (line.startsWith("+")) added++;
+        else if (line.startsWith("-")) removed++;
       }
-      continue
+      continue;
     }
-    lines += node.content.split("\n").length
+    lines += node.content.split("\n").length;
   }
-  if (diffs) return { size: added + removed, label: `+${added} −${removed}` }
-  return { size: lines, label: `${lines} ${lines === 1 ? "line" : "lines"}` }
+  if (diffs) return { size: added + removed, label: `+${added} −${removed}` };
+  return { size: lines, label: `${lines} ${lines === 1 ? "line" : "lines"}` };
 }
 
 export default {
   id: "opencode-fold-diffs",
-  tui: async (api, options) => {
-    const opts = { ...DEFAULTS, ...(options ?? {}) }
-    const peek = Math.max(0, Number(opts.lines) || 0)
-    const floor = Math.max(0, Number(opts.min_lines) || 0)
-    const shell = opts.bash !== false
-    const shellPeek = Math.max(0, Number(opts.bash_lines) || 0)
+  setup(context) {
+    const opts = { ...DEFAULTS, ...(context.options ?? {}) };
+    const peek = Math.max(0, Number(opts.lines) || 0);
+    const floor = Math.max(0, Number(opts.min_lines) || 0);
+    const shell = opts.bash === true;
+    const shellPeek = Math.max(0, Number(opts.bash_lines) || 0);
 
     // Folded blocks, by their block renderable. WeakMap so a session switch,
     // which destroys the renderables, drops the state with them.
-    const known = new WeakMap()
+    const known = new WeakMap();
     // The mode new blocks adopt. ctrl+o flips it, so "expand everything" also
     // means "and stop folding what arrives next", the way a verbose toggle works.
-    let folding = opts.folded !== false
-    // Set once the title rewrite is proven not to take, so we stop retrying it.
-    let titles = opts.stats !== false
+    let folding = opts.folded !== false;
+    // Set once the header rewrite is proven not to take, so we stop retrying it.
+    let titles = opts.stats !== false;
 
-    let cached
+    let cached;
     function transcript() {
-      if (cached && !cached.isDestroyed) return cached
-      cached = findTranscript(api.renderer.root)
-      return cached
+      if (cached && !cached.isDestroyed) return cached;
+      cached = findTranscript(context.renderer.root);
+      return cached;
     }
 
     function apply(state, fold) {
-      state.folded = fold
+      state.folded = fold;
       state.body.forEach((node, index) => {
         try {
           // Yoga honours a 0 max-height, so the body disappears from layout
           // entirely rather than leaving a gap where it used to be.
-          node.maxHeight = fold ? (index === 0 ? state.peek : 0) : undefined
-          node.overflow = fold ? "hidden" : state.overflow[index]
+          node.maxHeight = fold ? (index === 0 ? state.peek : 0) : undefined;
+          node.overflow = fold ? "hidden" : state.overflow[index];
         } catch {}
-      })
+      });
       // With the body at zero height, the block's own padding and the gap it
-      // keeps between children are all that is left: four near-blank rows
-      // around one line of title. Collapse the chrome too so a folded block
-      // reads as the single row it now is. The restored values are BlockTool's
-      // own (paddingTop/Bottom 1, gap 1) because opentui gives these setters no
-      // getters to read the originals back from. Never for a shell block: its
-      // output is a sibling of the command and stays on screen, so the chrome
-      // is still holding something up.
+      // keeps between children are all that is left. Collapse the chrome too so
+      // a folded block reads as the single row it now is. The restored values
+      // are BlockTool's own (paddingTop/Bottom 1, gap 1) because opentui gives
+      // these setters no getters to read the originals back from. Never for a
+      // shell block: its output is a sibling of the command and stays on screen,
+      // so the chrome is still holding something up.
       if (state.chrome) {
         try {
-          state.block.gap = fold ? 0 : 1
-          state.block.paddingTop = fold ? 0 : 1
-          state.block.paddingBottom = fold ? 0 : 1
+          state.block.gap = fold ? 0 : 1;
+          state.block.paddingTop = fold ? 0 : 1;
+          state.block.paddingBottom = fold ? 0 : 1;
         } catch {}
       }
-      if (!titles || !state.title) return
-      const next = fold ? `${state.title.text} ${state.suffix}` : state.title.text
+      if (!titles || !state.title) return;
+      const next = fold ? `${state.text} ${state.suffix}` : state.text;
       try {
-        state.title.node.content = next
+        state.title.content = next;
       } catch {
-        titles = false
-        return
+        titles = false;
+        return;
       }
       // The host owns that text node. If solid is not letting go of it there is
       // nothing to be gained by asking again on every block.
-      if (plain(state.title.node) !== next) titles = false
+      if (plain(state.title) !== next) titles = false;
     }
 
     function adoptDiff(block) {
-      const title = blockTitle(block)
-      if (!title) return false
-      const kids = children(block)
-      // Everything after the title that actually carries a diff or a file body.
-      // Diagnostics and the error line carry neither, so an edit that broke the
-      // build still says so while folded.
-      const body = []
-      const heavy = []
-      for (const child of kids.slice(1)) {
-        const found = bulk(child)
-        if (!found.length) continue
-        body.push(child)
-        heavy.push(...found)
+      const header = blockHeader(block);
+      if (!header) return false;
+      // Everything after the header that actually carries a diff or a file
+      // body. Diagnostics and the error line carry neither, so an edit that
+      // broke the build still says so while folded.
+      const body = [];
+      const heavy = [];
+      for (const child of children(block)) {
+        if (child === header.row) continue;
+        const found = bulk(child);
+        if (!found.length) continue;
+        body.push(child);
+        heavy.push(...found);
       }
-      if (!body.length) return false
-      const stats = summarise(heavy)
-      if (stats.size < floor) return false
+      if (!body.length) return false;
+      const stats = summarise(heavy);
+      if (stats.size < floor) return false;
 
-      const head = kids[0]
       const state = {
         block,
         body,
         overflow: body.map((node) => node.overflow),
-        title: plain(head) === title ? { node: head, text: title } : undefined,
+        title: header.node,
+        text: header.label,
         suffix: `${stats.label} · click to expand`,
         peek,
         chrome: peek === 0,
         folded: false,
-      }
-      known.set(block, state)
+      };
+      known.set(block, state);
 
       block.onMouseUp = () => {
         // Copy-on-select is a drag ending on the block; that is not a click.
-        if (api.renderer.getSelection?.()?.getSelectedText?.()) return
-        apply(state, !state.folded)
-      }
+        if (context.renderer.getSelection?.()?.getSelectedText?.()) return;
+        apply(state, !state.folded);
+      };
 
-      if (folding) apply(state, true)
-      return true
+      if (folding) apply(state, true);
+      return true;
     }
 
     function adoptShell(block) {
-      const found = shellCommand(block)
-      if (!found) return
-      if (commandRows(found.node, found.text) < floor) return
+      const found = shellCommand(block);
+      if (!found) return;
+      if (commandRows(found.node, found.text) < floor) return;
 
       const state = {
         block,
@@ -298,101 +314,99 @@ export default {
         peek: shellPeek,
         chrome: false,
         folded: false,
-      }
-      known.set(block, state)
+      };
+      known.set(block, state);
 
-      // The block's own onMouseUp belongs to the host here -- for a bash block
-      // it is what expands the collapsed OUTPUT -- and opentui declares the
-      // handler as a setter with no getter, so it cannot be read back and
-      // chained. Take the command text instead and stop the event on it:
-      // clicking the command folds the command, clicking anywhere else in the
-      // block still does exactly what it did before this plugin loaded.
+      // The block's own onMouseUp belongs to the host here -- it is what expands
+      // the collapsed command/output -- and opentui declares the handler as a
+      // setter with no getter, so it cannot be read back and chained. Take the
+      // command text instead and stop the event on it: clicking the command
+      // folds the command, clicking anywhere else in the block still does
+      // exactly what it did before this plugin loaded.
       found.node.onMouseUp = (event) => {
-        if (api.renderer.getSelection?.()?.getSelectedText?.()) return
-        apply(state, !state.folded)
-        event?.stopPropagation?.()
-      }
+        if (context.renderer.getSelection?.()?.getSelectedText?.()) return;
+        apply(state, !state.folded);
+        event?.stopPropagation?.();
+      };
 
-      if (folding) apply(state, true)
+      if (folding) apply(state, true);
     }
 
     function adopt(block) {
-      if (adoptDiff(block)) return
-      if (shell) adoptShell(block)
+      if (adoptDiff(block)) return;
+      if (shell) adoptShell(block);
     }
 
     function sweep() {
-      if (api.route.current.name !== "session") return
-      const box = transcript()
-      if (!box) return
+      if (context.ui.router.current().type !== "session") return;
+      const box = transcript();
+      if (!box) return;
       for (const block of scan(box, [], shell)) {
-        if (known.has(block)) continue
-        adopt(block)
+        if (known.has(block)) continue;
+        adopt(block);
       }
     }
 
     function all(fold) {
-      folding = fold
-      const box = transcript()
-      if (!box) return 0
-      let count = 0
+      folding = fold;
+      const box = transcript();
+      if (!box) return 0;
+      let count = 0;
       for (const block of scan(box, [], shell)) {
-        const state = known.get(block)
-        if (!state || state.folded === fold) continue
-        apply(state, fold)
-        count++
+        const state = known.get(block);
+        if (!state || state.folded === fold) continue;
+        apply(state, fold);
+        count++;
       }
-      return count
+      return count;
     }
 
-    let pending
+    let pending;
     function schedule() {
-      if (pending) return
+      if (pending) return;
       pending = setTimeout(() => {
-        pending = undefined
-        sweep()
-      }, 120)
+        pending = undefined;
+        sweep();
+      }, 120);
     }
 
     const offs = [
-      api.event.on("message.part.updated", schedule),
-      api.event.on("message.updated", schedule),
-    ]
-    const timer = setInterval(sweep, SWEEP_MS)
-    schedule()
+      context.data.on("message.part.updated", schedule),
+      context.data.on("message.updated", schedule),
+    ];
+    const timer = setInterval(sweep, SWEEP_MS);
+    schedule();
 
-    api.keymap.registerLayer({
+    context.keymap.layer(() => ({
       mode: "base",
       priority: 100,
       commands: [
         {
-          name: "fold_diffs.toggle",
+          id: "opencode.fold_diffs.toggle",
           title: "Fold / unfold file diffs",
-          category: "Plugin",
+          group: "Plugin",
+          bind: opts.key || false,
           run() {
-            sweep()
-            const fold = !folding
-            const changed = all(fold)
-            api.ui.toast({
+            sweep();
+            const fold = !folding;
+            const changed = all(fold);
+            context.ui.toast.show({
               variant: "info",
               message: changed
                 ? `${fold ? "Folded" : "Unfolded"} ${changed} ${changed === 1 ? "block" : "blocks"}`
                 : `New file blocks will be ${fold ? "folded" : "unfolded"}`,
               duration: 2000,
-            })
-            return true
+            });
           },
         },
       ],
-      bindings: opts.key
-        ? [{ key: opts.key, cmd: "fold_diffs.toggle", desc: "Fold / unfold file diffs", preventDefault: true }]
-        : [],
-    })
+      bindings: opts.key ? ["opencode.fold_diffs.toggle"] : [],
+    }));
 
-    api.lifecycle.onDispose(() => {
-      clearInterval(timer)
-      if (pending) clearTimeout(pending)
-      for (const off of offs) if (typeof off === "function") off()
-    })
+    return () => {
+      clearInterval(timer);
+      if (pending) clearTimeout(pending);
+      for (const off of offs) if (typeof off === "function") off();
+    };
   },
-}
+};
