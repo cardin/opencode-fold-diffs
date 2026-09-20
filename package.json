@@ -15,17 +15,21 @@
     "transcript",
     "scrollback"
   ],
-  "scripts": {
-    "test": "node --test"
-  },
+  "main": "./index.js",
   "exports": {
-    "./tui": "./index.js"
+    ".": "./index.js",
+    "./server": "./index.js",
+    "./tui": "./tui.js"
   },
   "files": [
     "index.js",
+    "tui.js",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
   "author": {
     "name": "Tanner Bruhn",
     "url": "https://github.com/tannerbruhn"

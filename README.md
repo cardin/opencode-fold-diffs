@@ -71,7 +71,7 @@ Restart OpenCode afterwards; plugins load at startup.
 
 ### From a local checkout
 
-Clone this repository and point the plugin entry at the checkout. The loader reads the package's `exports["./tui"]` entrypoint, which points at `index.js`.
+Clone this repository and point the plugin entry at the checkout. The package ships a server entry (`index.js`) and a TUI entry (`tui.js`); OpenCode discovers a plugin directory by its server entry and loads the `tui` entry beside it, so the plugin shows up by id instead of as an anonymous entry.
 
 ```json
 {

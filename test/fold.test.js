@@ -7,7 +7,7 @@
 //   node --test test/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import plugin from "../index.js";
+import plugin from "../tui.js";
 
 class Box {
   constructor(kids = [], props = {}) {
@@ -98,6 +98,7 @@ function harness(t, kids, options) {
   const root = new Box([new Scrollbox(kids)]);
   const listeners = {};
   const toasts = [];
+  let slot;
   let layer;
   const context = {
     options: options ?? {},
@@ -116,13 +117,26 @@ function harness(t, kids, options) {
     ui: {
       router: { current: () => ({ type: "session", sessionID: "s" }) },
       toast: { show: (input) => toasts.push(input) },
+      // The host mounts the plugin's slot; rendering it is what registers the
+      // keymap layer, matching the real "keymap.layer needs Solid context"
+      // contract.
+      slot(claim) {
+        slot = claim;
+        return () => {};
+      },
     },
   };
   const cleanup = plugin.setup(context);
   if (typeof cleanup === "function") t.after(cleanup);
+  // Mount the slot before returning, and expose the claim so a test can check
+  // the layer is not registered until it renders.
+  const mount = () => slot?.render();
+  mount();
   return {
     context,
     toasts,
+    slot: () => slot,
+    mount,
     fire: (name) => listeners[name]?.(),
     run: () => layer.commands[0].run(),
     command: () => layer.commands[0],
@@ -293,6 +307,19 @@ test("binds ctrl+o by default and nothing when asked", async (t) => {
 
   const b = harness(t, [], { key: "" });
   assert.equal(b.command().bind, false);
+});
+
+test("owns its command layer through the app slot", async (t) => {
+  const h = harness(t, []);
+  assert.equal(h.slot().append, "app", "the layer is registered from a mounted component");
+  assert.equal(h.command().id, "opencode-fold-diffs.toggle");
+  assert.equal(h.command().palette, true);
+});
+
+test("ships a server entry so the plugin is discovered by id", async () => {
+  const server = await import("../index.js");
+  assert.equal(server.default.id, "opencode-fold-diffs");
+  assert.equal(typeof server.default.setup, "function");
 });
 
 test("folds nothing outside a session route", async (t) => {
