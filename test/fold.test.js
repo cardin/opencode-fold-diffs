@@ -140,6 +140,7 @@ function harness(t, kids, options) {
     fire: (name) => listeners[name]?.(),
     run: () => layer.commands[0].run(),
     command: () => layer.commands[0],
+    commands: () => layer.commands,
   };
 }
 
@@ -314,6 +315,16 @@ test("owns its command layer through the app slot", async (t) => {
   assert.equal(h.slot().append, "app", "the layer is registered from a mounted component");
   assert.equal(h.command().id, "opencode-fold-diffs.toggle");
   assert.equal(h.command().palette, true);
+});
+
+test("diagnose reports what the plugin can see", async (t) => {
+  const { block } = editBlock();
+  const h = harness(t, [block]);
+  await settle();
+
+  const diagnose = h.commands().find((c) => c.id === "opencode-fold-diffs.diagnose");
+  diagnose.run();
+  assert.match(h.toasts.at(-1).message, /transcript: yes · blocks: 1 · folded: 1 · stats: on/);
 });
 
 test("ships a server entry so the plugin is discovered by id", async () => {

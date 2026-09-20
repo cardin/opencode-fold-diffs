@@ -128,6 +128,21 @@ V1 plugin implementations do not run in V2. This branch made these changes:
 - `bash` defaults to `false`, because V2 now trims long commands to two lines itself.
 - Config moves from `tui.json` to `cli.json` (or `opencode.json(c)`).
 
+## Testing
+
+1. Restart so the plugin loads: `opencode service restart`, then relaunch the TUI.
+2. Confirm it loaded: `/plugins` should list `opencode-fold-diffs` by id, and `Ctrl+P` → **Fold / unfold file diffs** should be in the palette.
+3. Ask the agent for a small edit. The block should render as a single header row, `← Edit +2 −1 · click to expand  path`. Click it to open, click again to close.
+4. Press the toggle key (`ctrl+o` by default) to fold or unfold every block in the session.
+5. If nothing folds, run `Ctrl+P` → **Fold diffs: diagnose**. The toast reports what the plugin can see:
+
+| Result | Meaning |
+|---|---|
+| `transcript: not found` | No session view is open, so there is nothing to fold. |
+| `transcript: yes · blocks: 0` | The transcript was found but no file blocks matched — the host render tree differs from what this plugin expects. |
+| `transcript: yes · blocks: N · folded: N` | Detection and folding ran; if the blocks still look expanded, the fold did not take on the renderables. |
+| `stats: off` | Folding works but the header could not be restated (Solid owns the label node). |
+
 ## Status
 
 Written against **opencode v2.0.10**. The tree-walking, block matching, fold/unfold and toggle logic run green against a mock renderer tree shaped like V2's (`node --test`). The mock is not the real transcript, so the first run against a live session is still worth checking: a completed `edit`/`write` folds to its header, a click reopens it, `ctrl+o` flips them all, and a permission dialog still shows its diff in full.

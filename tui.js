@@ -406,6 +406,27 @@ export default {
               });
             },
           },
+          {
+            // Reports what the plugin can see, so "nothing happens" can be told
+            // apart from "no transcript yet" or "blocks not matched".
+            id: "opencode-fold-diffs.diagnose",
+            title: "Fold diffs: diagnose",
+            group: "Plugin",
+            palette: true,
+            run() {
+              const box = transcript();
+              const blocks = box ? scan(box, [], shell) : [];
+              const folded = blocks.filter((block) => known.get(block)?.folded).length;
+              context.ui.toast.show({
+                title: "opencode-fold-diffs",
+                variant: box ? "info" : "warning",
+                duration: 4000,
+                message: box
+                  ? `transcript: yes · blocks: ${blocks.length} · folded: ${folded} · stats: ${titles ? "on" : "off"}`
+                  : "transcript: not found — open a session first",
+              });
+            },
+          },
         ],
         bindings: opts.key ? ["opencode-fold-diffs.toggle"] : [],
       }));
