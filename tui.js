@@ -230,7 +230,7 @@ function dumpNode(node, depth, lines, limit) {
     `${"  ".repeat(depth)}${node.constructor?.name ?? "node"} kids=${kids.length}` +
       (typeof text === "string" ? ` text=${JSON.stringify(text.slice(0, 80))}` : "") +
       (tags.length ? ` [${tags.join(",")}]` : "") +
-      ` maxH=${node.maxHeight} ov=${node.overflow}`,
+      ` vis=${node.visible} h=${node.height} ov=${node.overflow}`,
   );
   for (const kid of kids) dumpNode(kid, depth + 1, lines, limit);
 }
@@ -266,9 +266,13 @@ export default {
       state.folded = fold;
       state.body.forEach((node, index) => {
         try {
-          // Yoga honours a 0 max-height, so the body disappears from layout
-          // entirely rather than leaving a gap where it used to be.
-          node.maxHeight = fold ? (index === 0 ? state.peek : 0) : undefined;
+          // `visible = false` sets Yoga display:none, which removes the body
+          // from layout entirely. A zero max-height alone was not enough: Yoga
+          // clamped the box to zero rows but OpenTUI still painted the diff.
+          // A positive `lines` peek keeps the first body visible instead.
+          const peekRow = fold && index === 0 && state.peek > 0;
+          node.visible = !fold || peekRow;
+          node.maxHeight = peekRow ? state.peek : undefined;
           node.overflow = fold ? "hidden" : state.overflow[index];
         } catch {}
       });

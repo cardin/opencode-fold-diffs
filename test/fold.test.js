@@ -12,6 +12,7 @@ import plugin from "../tui.js";
 class Box {
   constructor(kids = [], props = {}) {
     this.kids = kids;
+    this.visible = true;
     Object.assign(this, props);
   }
   getChildren() {
@@ -24,6 +25,7 @@ class Box {
 class Text {
   constructor(text) {
     this._text = text;
+    this.visible = true;
   }
   get plainText() {
     return this._text;
@@ -151,7 +153,7 @@ test("folds an edit block to its header and counts the diff", async (t) => {
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
   assert.equal(body.overflow, "hidden");
   assert.equal(block.gap, 0);
   assert.equal(block.paddingTop, 0);
@@ -165,7 +167,7 @@ test("counts written files in lines", async (t) => {
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
   assert.equal(row.kids[0].plainText, "# Wrote 40 lines · click to expand");
 });
 
@@ -175,13 +177,13 @@ test("click toggles one block, restoring the host's chrome", async (t) => {
   await settle();
 
   block.onMouseUp();
-  assert.equal(body.maxHeight, undefined);
+  assert.equal(body.visible, true);
   assert.equal(block.gap, 1);
   assert.equal(block.paddingTop, 1);
   assert.equal(row.kids[0].plainText, "← Edit");
 
   block.onMouseUp();
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
 });
 
 test("a drag that ends on the block is a selection, not a click", async (t) => {
@@ -191,7 +193,7 @@ test("a drag that ends on the block is a selection, not a click", async (t) => {
   await settle();
 
   block.onMouseUp();
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
 });
 
 test("a childless placeholder before the header does not hide the block", async (t) => {
@@ -200,7 +202,7 @@ test("a childless placeholder before the header does not hide the block", async 
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
 });
 
 test("a placeholder inside the header row does not hide the label", async (t) => {
@@ -210,7 +212,7 @@ test("a placeholder inside the header row does not hide the label", async (t) =>
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
   assert.equal(row.kids[1].plainText, "← Edit +4 −2 · click to expand");
 });
 
@@ -224,8 +226,8 @@ test("small blocks and other tools are left alone", async (t) => {
   const h = harness(t, [small.block, bash.block]);
   await settle();
 
-  assert.equal(small.body.maxHeight, undefined);
-  assert.equal(bash.body.maxHeight, undefined);
+  assert.equal(small.body.visible, true);
+  assert.equal(bash.body.visible, true);
   assert.equal(bash.block.kids[0].kids[0].plainText, "# bash");
 });
 
@@ -235,8 +237,8 @@ test("diagnostics stay visible while the diff folds", async (t) => {
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(body.maxHeight, 0);
-  assert.equal(diagnostics.maxHeight, undefined);
+  assert.equal(body.visible, false);
+  assert.equal(diagnostics.visible, true);
 });
 
 test("blocks arriving later fold on the part event", async (t) => {
@@ -249,7 +251,7 @@ test("blocks arriving later fold on the part event", async (t) => {
   kids.push(later.block);
   h.fire("message.part.updated");
   await settle();
-  assert.equal(later.body.maxHeight, 0);
+  assert.equal(later.body.visible, false);
 });
 
 test("the toggle unfolds everything, then folds what arrives next", async (t) => {
@@ -260,18 +262,18 @@ test("the toggle unfolds everything, then folds what arrives next", async (t) =>
   await settle();
 
   h.run();
-  assert.equal(one.body.maxHeight, undefined);
-  assert.equal(two.body.maxHeight, undefined);
+  assert.equal(one.body.visible, true);
+  assert.equal(two.body.visible, true);
   assert.match(h.toasts.at(-1).message, /Unfolded 2 blocks/);
 
   const later = editBlock("# Created", "src/third.ts");
   kids.push(later.block);
   h.fire("message.updated");
   await settle();
-  assert.equal(later.body.maxHeight, undefined, "new blocks follow the toggled mode");
+  assert.equal(later.body.visible, true, "new blocks follow the toggled mode");
 
   h.run();
-  assert.equal(later.body.maxHeight, 0);
+  assert.equal(later.body.visible, false);
 });
 
 test("lines: n leaves a peek and keeps the block's padding", async (t) => {
@@ -279,6 +281,7 @@ test("lines: n leaves a peek and keeps the block's padding", async (t) => {
   const h = harness(t, [block], { lines: 3 });
   await settle();
 
+  assert.equal(body.visible, true);
   assert.equal(body.maxHeight, 3);
   assert.equal(block.gap, undefined, "chrome is only tightened for a title-only fold");
 });
@@ -288,9 +291,9 @@ test("folded: false only installs the toggle", async (t) => {
   const h = harness(t, [block], { folded: false });
   await settle();
 
-  assert.equal(body.maxHeight, undefined);
+  assert.equal(body.visible, true);
   h.run();
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
 });
 
 test("stats: false leaves the header alone", async (t) => {
@@ -298,7 +301,7 @@ test("stats: false leaves the header alone", async (t) => {
   const h = harness(t, [block], { stats: false });
   await settle();
 
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
   assert.equal(row.kids[0].plainText, "← Edit");
 });
 
@@ -307,7 +310,7 @@ test("re-adopting a header that already carries the suffix does not double it", 
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(body.maxHeight, 0);
+  assert.equal(body.visible, false);
   assert.equal(row.kids[0].plainText, "← Edit +4 −2 · click to expand");
 });
 
@@ -348,7 +351,7 @@ test("folds nothing outside a session route", async (t) => {
   h.context.ui.router.current = () => ({ type: "home" });
   await settle();
 
-  assert.equal(body.maxHeight, undefined);
+  assert.equal(body.visible, true);
 });
 
 // --- bash commands -------------------------------------------------------
@@ -385,7 +388,7 @@ test("leaves bash commands to the host by default", async (t) => {
   const h = harness(t, [block]);
   await settle();
 
-  assert.equal(cmd.maxHeight, undefined);
+  assert.equal(cmd.visible, true);
   assert.equal(cmd.onMouseUp, undefined);
 });
 
@@ -394,6 +397,7 @@ test("folds a long bash command to its first row when enabled", async (t) => {
   const h = harness(t, [block], { bash: true });
   await settle();
 
+  assert.equal(cmd.visible, true);
   assert.equal(cmd.maxHeight, 1);
   assert.equal(cmd.overflow, "hidden");
   // The output and the host's hint are siblings of the command, not children,
@@ -414,11 +418,12 @@ test("clicking the command toggles it and stops the host seeing the click", asyn
 
   const open = click();
   cmd.onMouseUp(open);
-  assert.equal(cmd.maxHeight, undefined);
+  assert.equal(cmd.visible, true);
   assert.equal(open.stopped, 1);
 
   const shut = click();
   cmd.onMouseUp(shut);
+  assert.equal(cmd.visible, true);
   assert.equal(cmd.maxHeight, 1);
   assert.equal(shut.stopped, 1);
   assert.equal(block.onMouseUp, undefined);
@@ -431,6 +436,7 @@ test("a drag ending on the command is a selection, not a click", async (t) => {
   await settle();
 
   cmd.onMouseUp(click());
+  assert.equal(cmd.visible, true);
   assert.equal(cmd.maxHeight, 1);
 });
 
@@ -440,8 +446,8 @@ test("short and still-running commands are left alone", async (t) => {
   const h = harness(t, [short.block, running.block], { bash: true });
   await settle();
 
-  assert.equal(short.cmd.maxHeight, undefined);
-  assert.equal(running.cmd.maxHeight, undefined);
+  assert.equal(short.cmd.visible, true);
+  assert.equal(running.cmd.visible, true);
   assert.equal(running.cmd.onMouseUp, undefined);
 });
 
@@ -450,6 +456,7 @@ test("bash_lines sets how much of the command survives", async (t) => {
   const h = harness(t, [block], { bash: true, bash_lines: 3 });
   await settle();
 
+  assert.equal(cmd.visible, true);
   assert.equal(cmd.maxHeight, 3);
 });
 
@@ -460,11 +467,11 @@ test("ctrl+o folds and unfolds commands alongside diffs", async (t) => {
   await settle();
 
   h.run();
-  assert.equal(edit.body.maxHeight, undefined);
-  assert.equal(shell.cmd.maxHeight, undefined);
+  assert.equal(edit.body.visible, true);
+  assert.equal(shell.cmd.visible, true);
   assert.match(h.toasts.at(-1).message, /Unfolded 2 blocks/);
 
   h.run();
-  assert.equal(edit.body.maxHeight, 0);
+  assert.equal(edit.body.visible, false);
   assert.equal(shell.cmd.maxHeight, 1);
 });

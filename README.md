@@ -110,7 +110,7 @@ The V2 TUI plugin API (`@opencode/plugin/tui`) has no slot for message parts, so
 
 1. **Find the transcript.** The only scrollbox in the tree with `stickyScroll && stickyStart === "bottom"`. The sidebar, dialogs, autocomplete and diff viewer all have scrollboxes; none of them are sticky.
 2. **Find the blocks.** A V2 `BlockTool` renders its header first as a row box whose first two children are the label text (`# Wrote`, `← Edit`, `← Patched`, `# Created`, `# Deleted`) and the path value. File blocks are matched on that label; a bash block carries no header, so it is found by shape — a child whose first grandchild is the `$ `-prefixed command.
-3. **Fold.** Set `maxHeight = 0` and `overflow = "hidden"` on the children carrying the bulk. Yoga accepts a zero max-height, so the body leaves layout instead of leaving a hole. The block's own chrome (`gap`, `paddingTop`, `paddingBottom` of 1) is tightened to zero so a folded block occupies one row.
+3. **Fold.** Set `visible = false` on the children carrying the bulk. That sets Yoga `display: none`, so the body leaves layout instead of leaving a hole. A zero `max-height` alone is not enough — the box collapses to zero rows but OpenTUI still paints the diff. A positive `lines` value keeps the first body visible and uses `maxHeight` for it instead. The block's own chrome (`gap`, `paddingTop`, `paddingBottom` of 1) is tightened to zero so a folded block occupies one row.
 4. **Toggle.** Assign `onMouseUp` on the block. The solid adapter sets that as a plain property, so a plugin can set it the same way — it replaces `BlockTool`'s own handler, which is why the copy-on-select guard is reimplemented here. For a bash block the host's handler is the output toggle and must be preserved, so the handler goes on the command text with `stopPropagation()` instead.
 5. **Restate the header.** The stats suffix is appended to the label text node, not the path. If solid will not let go of that node the plugin stops trying and folds without the suffix.
 
@@ -145,7 +145,9 @@ V1 plugin implementations do not run in V2. This branch made these changes:
 
 ## Status
 
-Written against **opencode v2.0.10**. The tree-walking, block matching, fold/unfold and toggle logic run green against a mock renderer tree shaped like V2's (`node --test`). The mock is not the real transcript, so the first run against a live session is still worth checking: a completed `edit`/`write` folds to its header, a click reopens it, the toggle flips them all, and a permission dialog still shows its diff in full.
+Written against **opencode v2.0.10 / v2.0.11**. The tree-walking, block matching, fold/unfold and toggle logic run green against a mock renderer tree shaped like V2's (`node --test`), and the fold was checked against a real transcript: `visible = false` (Yoga `display: none`) is what actually hides a body, not `maxHeight`.
+
+Edits with fewer than `min_lines` changed lines (default 6) are left expanded on purpose — a one-line change is already its own summary. Set `min_lines: 0` to fold every file block.
 
 ## License
 
