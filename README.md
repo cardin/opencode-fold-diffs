@@ -94,6 +94,7 @@ Clone this repository and point the plugin entry at the checkout. The package sh
 | `key` | `""` | Optional binding for fold/unfold-all. Empty by default so no OpenCode shortcut is overridden; set e.g. `"ctrl+shift+d"` to opt in. |
 | `bash` | `false` | Fold long bash commands too. Off by default on V2 because the host already trims them to two lines. |
 | `bash_lines` | `1` | Rows of the command left showing when folded. `1` keeps the line that says what the thing was. |
+| `dump` | `""` | Where **Fold diffs: diagnose** writes its tree dump. `""` means `/tmp/opencode-fold-diffs-tree.txt`; `false` disables the dump. |
 
 > `ctrl+o` belongs to OpenCode's **Open recent sessions and projects** (`open.menu`), so this plugin does not bind it. Choose an unused key for the `key` option.
 

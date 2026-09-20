@@ -44,6 +44,9 @@ const DEFAULTS = {
   // gap it was in V1. Off by default; turn on to tighten it to one line.
   bash: false,
   bash_lines: 1,
+  // Where "Fold diffs: diagnose" writes its tree dump. "" is the default
+  // (/tmp/opencode-fold-diffs-tree.txt); false turns the dump off.
+  dump: "",
 };
 
 // Header labels of the file-writing tools, as V2 renders them. Unlike V1, V2
@@ -470,15 +473,23 @@ export default {
                   summary.push(
                     `block "${head?.label ?? "?"}" folded=${state?.folded} body=[` +
                       (state?.body ?? [])
-                        .map((node) => `${node.constructor?.name}(maxH=${node.maxHeight},ov=${node.overflow})`)
+                        .map((node) => `${node.constructor?.name}(vis=${node.visible},ov=${node.overflow})`)
                         .join(", ") +
                       "]",
                   );
                 }
-                const lines = [];
-                dumpNode(box ?? context.renderer.root, 0, lines, 600);
-                dump = join(tmpdir(), "opencode-fold-diffs-tree.txt");
-                writeFileSync(dump, summary.concat("", lines).join("\n"));
+                const target =
+                  opts.dump === false
+                    ? undefined
+                    : typeof opts.dump === "string" && opts.dump
+                      ? opts.dump
+                      : join(tmpdir(), "opencode-fold-diffs-tree.txt");
+                if (target) {
+                  const lines = [];
+                  dumpNode(box ?? context.renderer.root, 0, lines, 600);
+                  dump = target;
+                  writeFileSync(target, summary.concat("", lines).join("\n"));
+                }
               } catch {}
               context.ui.toast.show({
                 title: "opencode-fold-diffs",

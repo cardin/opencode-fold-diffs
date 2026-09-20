@@ -331,7 +331,8 @@ test("owns its command layer through the app slot", async (t) => {
 
 test("diagnose reports what the plugin can see", async (t) => {
   const { block } = editBlock();
-  const h = harness(t, [block]);
+  // dump: false so the test never clobbers a live transcript dump.
+  const h = harness(t, [block], { dump: false });
   await settle();
 
   const diagnose = h.commands().find((c) => c.id === "opencode-fold-diffs.diagnose");
