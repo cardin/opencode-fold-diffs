@@ -457,10 +457,24 @@ export default {
               const folded = blocks.filter((block) => known.get(block)?.folded).length;
               let dump;
               try {
+                const summary = [
+                  `transcript=${Boolean(box)} blocks=${blocks.length} folded=${folded} stats=${titles ? "on" : "off"}`,
+                ];
+                for (const block of blocks) {
+                  const state = known.get(block);
+                  const head = blockHeader(block);
+                  summary.push(
+                    `block "${head?.label ?? "?"}" folded=${state?.folded} body=[` +
+                      (state?.body ?? [])
+                        .map((node) => `${node.constructor?.name}(maxH=${node.maxHeight},ov=${node.overflow})`)
+                        .join(", ") +
+                      "]",
+                  );
+                }
                 const lines = [];
                 dumpNode(box ?? context.renderer.root, 0, lines, 600);
                 dump = join(tmpdir(), "opencode-fold-diffs-tree.txt");
-                writeFileSync(dump, lines.join("\n"));
+                writeFileSync(dump, summary.concat("", lines).join("\n"));
               } catch {}
               context.ui.toast.show({
                 title: "opencode-fold-diffs",
