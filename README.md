@@ -36,7 +36,7 @@ Click the row to open it. If you set the `key` option, that binding folds or unf
 ## Install
 
 ```sh
-opencode plugin add opencode-fold-diffs
+opencode plugin add @cardinal4/opencode-fold-diffs
 ```
 
 Then list it in your CLI config so the terminal loads the TUI entrypoint. Add it to `~/.config/opencode/cli.json` (or `$XDG_CONFIG_HOME/opencode/cli.json`):
@@ -44,7 +44,7 @@ Then list it in your CLI config so the terminal loads the TUI entrypoint. Add it
 ```json
 {
   "$schema": "https://opencode.ai/v2/cli.json",
-  "plugins": ["opencode-fold-diffs"]
+  "plugins": ["@cardinal4/opencode-fold-diffs"]
 }
 ```
 
@@ -56,7 +56,7 @@ With options:
 {
   "plugins": [
     {
-      "package": "opencode-fold-diffs",
+      "package": "@cardinal4/opencode-fold-diffs",
       "options": {
         "lines": 3,
         "min_lines": 10,
@@ -82,7 +82,7 @@ Clone this repository and point the plugin entry at the checkout. The package sh
 ## Options
 
 ```json
-"plugins": [["opencode-fold-diffs", { "lines": 3, "min_lines": 10, "key": "ctrl+f" }]]
+"plugins": [["@cardinal4/opencode-fold-diffs", { "lines": 3, "min_lines": 10, "key": "ctrl+f" }]]
 ```
 
 | Option | Default | Meaning |

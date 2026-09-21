@@ -1,5 +1,5 @@
 {
-  "name": "opencode-fold-diffs",
+  "name": "@cardinal4/opencode-fold-diffs",
   "version": "0.3.0",
   "description": "OpenCode V2 TUI plugin: write, edit and apply_patch blocks render folded to their header line, click or ctrl+o to open them.",
   "license": "MIT",
@@ -36,11 +36,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tannerbruhn/opencode-fold-diffs.git"
+    "url": "git+https://github.com/cardin/opencode-fold-diffs.git"
   },
-  "homepage": "https://github.com/tannerbruhn/opencode-fold-diffs#readme",
+  "homepage": "https://github.com/cardin/opencode-fold-diffs#readme",
   "bugs": {
-    "url": "https://github.com/tannerbruhn/opencode-fold-diffs/issues"
+    "url": "https://github.com/cardin/opencode-fold-diffs/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "opencode": ">=2.0.0"
