@@ -1,6 +1,6 @@
 {
   "name": "@cardinal4/opencode-fold-diffs",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OpenCode V2 TUI plugin: write, edit and apply_patch blocks render folded to their header line, click or ctrl+o to open them.",
   "license": "MIT",
   "type": "module",
