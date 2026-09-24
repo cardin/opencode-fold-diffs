@@ -89,14 +89,17 @@ function plain(node) {
 
 // Duck-typing, not instanceof: the classes live in the host's bundled
 // @opentui/core and are minified, so their names are not stable. A diff
-// renderable is the only thing in the tree carrying a `diff` string, and a code
-// renderable the only thing pairing `content` with `filetype`.
+// renderable is the only thing in the tree carrying a `diff` string. A code
+// renderable is the only thing whose `content` is a string -- text renderables
+// carry a styled-text `content` object and expose `plainText` instead. OpenCode
+// 2.0.16 stopped setting `filetype` on a written file's body, so it must not be
+// required (requiring it silently stopped every write block from folding).
 function isDiff(node) {
   return typeof node?.diff === "string";
 }
 
 function isCode(node) {
-  return typeof node?.content === "string" && typeof node?.filetype === "string";
+  return typeof node?.content === "string";
 }
 
 // The command text of a bash block, or nothing. V2 wraps the command and its

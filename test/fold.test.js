@@ -46,11 +46,13 @@ class Diff extends Box {
   }
 }
 
+// A written file's body. OpenCode 2.0.16 renders it as a code renderable with a
+// string `content` and no `filetype`; requiring `filetype` stopped write blocks
+// from folding, so the mock deliberately omits it.
 class Code extends Box {
   constructor(content) {
     super([]);
     this.content = content;
-    this.filetype = "ts";
   }
 }
 
