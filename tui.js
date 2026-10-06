@@ -10,15 +10,15 @@
 // closed without one, so this does it from a plugin.
 //
 // A folded block renders as its header line -- "# Wrote 40 lines · click to
-// expand  src/app.ts" -- and opens on click, or with ctrl+o for every block at
-// once.
+// expand  src/app.ts" -- and opens on click, or with the optional `key`
+// binding for every block at once.
 //
 // Options (cli.json -> ["opencode-fold-diffs", { ... }] or opencode.json(c)):
 //   lines      lines of the body left visible when folded  (default 0, title only)
 //   min_lines  leave blocks with fewer content lines alone  (default 6)
 //   stats      append "40 lines · click to expand" to the header (default true)
 //   folded     new blocks start folded                      (default true)
-//   key        binding that folds/unfolds every block        (default "ctrl+o")
+//   key        binding that folds/unfolds every block        (default "", none)
 //   bash       fold long bash commands too                   (default false on V2)
 //   bash_lines rows of the command left visible when folded  (default 1)
 //
@@ -420,10 +420,18 @@ export default {
       }, 120);
     }
 
-    const offs = [
-      context.data.on("message.part.updated", schedule),
-      context.data.on("message.updated", schedule),
+    // V1's message.part.updated / message.updated are legacy schemas in V2 --
+    // the client emits the session.* events instead, so the V1 names were a
+    // silent no-op and a new block only folded on the sweeping timer.
+    const events = [
+      "session.message.content.updated", // a part was appended or replaced
+      "session.tool.success", // a tool body (diff or file) appeared
+      "session.tool.failed", // a failed tool still renders its block
+      "session.step.ended", // the step's final content has arrived
+      "session.execution.succeeded", // the turn settled; take a final look
     ];
+    if (shell) events.push("session.shell.ended"); // the command now carries its "$ " prefix
+    const offs = events.map((name) => context.data.on(name, schedule));
     const timer = setInterval(sweep, SWEEP_MS);
     schedule();
 

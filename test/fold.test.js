@@ -139,6 +139,7 @@ function harness(t, kids, options) {
   return {
     context,
     toasts,
+    events: () => Object.keys(listeners),
     slot: () => slot,
     mount,
     fire: (name) => listeners[name]?.(),
@@ -243,7 +244,7 @@ test("diagnostics stay visible while the diff folds", async (t) => {
   assert.equal(diagnostics.visible, true);
 });
 
-test("blocks arriving later fold on the part event", async (t) => {
+test("blocks arriving later fold on the content event", async (t) => {
   const first = editBlock();
   const kids = [first.block];
   const h = harness(t, kids);
@@ -251,7 +252,7 @@ test("blocks arriving later fold on the part event", async (t) => {
 
   const later = editBlock("← Patched", "src/other.ts");
   kids.push(later.block);
-  h.fire("message.part.updated");
+  h.fire("session.message.content.updated");
   await settle();
   assert.equal(later.body.visible, false);
 });
@@ -270,7 +271,7 @@ test("the toggle unfolds everything, then folds what arrives next", async (t) =>
 
   const later = editBlock("# Created", "src/third.ts");
   kids.push(later.block);
-  h.fire("message.updated");
+  h.fire("session.tool.success");
   await settle();
   assert.equal(later.body.visible, true, "new blocks follow the toggled mode");
 
@@ -329,6 +330,33 @@ test("owns its command layer through the app slot", async (t) => {
   assert.equal(h.slot().append, "app", "the layer is registered from a mounted component");
   assert.equal(h.command().id, "opencode-fold-diffs.toggle");
   assert.equal(h.command().palette, true);
+});
+
+test("listens for V2 transcript events, not the V1 names", async (t) => {
+  const h = harness(t, []);
+  const events = h.events();
+  // These are the events the V2 client emits. The V1 names they replace exist
+  // only as legacy schemas and never fire, so subscribing to them folded
+  // nothing until the sweep timer ran.
+  for (const name of [
+    "session.message.content.updated",
+    "session.tool.success",
+    "session.tool.failed",
+    "session.step.ended",
+    "session.execution.succeeded",
+  ])
+    assert.ok(events.includes(name), `listens for ${name}`);
+  assert.equal(events.includes("session.shell.ended"), false, "bash folding is off");
+  assert.equal(events.includes("message.part.updated"), false, "no V1 event names");
+  assert.equal(events.includes("message.updated"), false, "no V1 event names");
+});
+
+test("listens for the shell event only when bash folding is on", async (t) => {
+  const off = harness(t, []);
+  assert.equal(off.events().includes("session.shell.ended"), false);
+
+  const on = harness(t, [], { bash: true });
+  assert.ok(on.events().includes("session.shell.ended"));
 });
 
 test("diagnose reports what the plugin can see", async (t) => {
