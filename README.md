@@ -132,6 +132,7 @@ V1 plugin implementations do not run in V2. The V2 port made these changes:
 
 - Entrypoint is a `{ id, setup(context) }` definition (`Plugin.define()` is an identity helper, so the shape is the same). `setup` returns the cleanup function instead of `api.lifecycle.onDispose`.
 - `api.renderer` → `context.renderer`; `api.route.current.name` → `context.ui.router.current().type`; `api.event.on` → `context.data.on`; `api.ui.toast` → `context.ui.toast.show`; `api.keymap.registerLayer` → `context.keymap.layer`.
+- `context.keymap.layer` is called directly from `setup` on 2.0.23+; earlier V2 builds read Solid context there, so the plugin still registers from a component mounted in the `app` slot for them.
 - Event names are V2's: `message.updated` / `message.part.updated` are legacy schemas in V2 and are never emitted. The plugin listens to `session.message.content.updated`, `session.tool.success` / `session.tool.failed`, `session.step.ended` and `session.execution.succeeded` (plus `session.shell.ended` when bash folding is on). These names exist from 2.0.10 on, so older V2 installs get the same fix without upgrading.
 - Tool headers are no longer one string. V1 rendered `"← Edit src/app.ts"`; V2 renders a label node plus a path node, so detection and the stats suffix target the label.
 - `bash` defaults to `false`, because V2 now trims long commands to two lines itself.

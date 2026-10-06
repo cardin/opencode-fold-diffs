@@ -241,6 +241,16 @@ function dumpNode(node, depth, lines, limit) {
   for (const kid of kids) dumpNode(kid, depth + 1, lines, limit);
 }
 
+// 2.0.23 was the first V2 release whose `keymap.layer` may be called from
+// setup; before that it reads Solid context and needs a mounted component.
+// An unparseable version takes the fallback, which works on every V2 build.
+function supportsSetupKeymap(version) {
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return major > 2 || (major === 2 && (minor > 0 || patch >= 23));
+}
+
 export const PLUGIN_ID = "opencode-fold-diffs";
 
 export default {
@@ -435,10 +445,11 @@ export default {
     const timer = setInterval(sweep, SWEEP_MS);
     schedule();
 
-    // `keymap.layer` reads Solid context, so it must run while a component is
-    // rendering, not directly during setup. A null component mounted in the
-    // `app` slot owns the layer for the plugin's lifetime.
-    function FoldCommands() {
+    // The command layer itself is identical everywhere; only who registers it
+    // differs. 2.0.23+ runs `keymap.layer` from setup and owns its teardown.
+    // Older V2 reads Solid context when registering, so there the layer has to
+    // be created by a mounted component. The `app` slot supplies one.
+    function registerCommands() {
       context.keymap.layer(() => ({
         mode: "global",
         priority: 100,
@@ -516,9 +527,17 @@ export default {
         ],
         bindings: opts.key ? ["opencode-fold-diffs.toggle"] : [],
       }));
-      return null;
     }
-    const stopCommands = context.ui.slot({ append: "app", render: () => FoldCommands() });
+    let stopCommands = () => {};
+    if (supportsSetupKeymap(context.app?.version)) {
+      registerCommands();
+    } else {
+      function FoldCommands() {
+        registerCommands();
+        return null;
+      }
+      stopCommands = context.ui.slot({ append: "app", render: () => FoldCommands() });
+    }
 
     return () => {
       stopCommands();

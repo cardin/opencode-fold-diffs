@@ -98,13 +98,14 @@ function writeBlock(lines = 40) {
   return { block: new Box([row, body]), row, body };
 }
 
-function harness(t, kids, options) {
+function harness(t, kids, options, version = "2.0.24") {
   const root = new Box([new Scrollbox(kids)]);
   const listeners = {};
   const toasts = [];
   let slot;
   let layer;
   const context = {
+    app: { version },
     options: options ?? {},
     renderer: { root, getSelection: () => undefined },
     data: {
@@ -121,9 +122,8 @@ function harness(t, kids, options) {
     ui: {
       router: { current: () => ({ type: "session", sessionID: "s" }) },
       toast: { show: (input) => toasts.push(input) },
-      // The host mounts the plugin's slot; rendering it is what registers the
-      // keymap layer, matching the real "keymap.layer needs Solid context"
-      // contract.
+      // On pre-2.0.23 builds the host mounts the plugin's slot, and rendering
+      // it is what registers the keymap layer; 2.0.23+ registers in setup.
       slot(claim) {
         slot = claim;
         return () => {};
@@ -132,8 +132,8 @@ function harness(t, kids, options) {
   };
   const cleanup = plugin.setup(context);
   if (typeof cleanup === "function") t.after(cleanup);
-  // Mount the slot before returning, and expose the claim so a test can check
-  // the layer is not registered until it renders.
+  // Render the fallback component, if this version uses one, so the layer is
+  // registered either way before the test runs.
   const mount = () => slot?.render();
   mount();
   return {
@@ -325,11 +325,23 @@ test("binds nothing by default and only what it is asked to", async (t) => {
   assert.equal(b.command().bind, "ctrl+shift+d");
 });
 
-test("owns its command layer through the app slot", async (t) => {
+test("registers the command layer from setup on 2.0.23+", async (t) => {
   const h = harness(t, []);
+  assert.equal(h.slot(), undefined, "no app slot is needed");
+  assert.equal(h.command().id, "opencode-fold-diffs.toggle");
+  assert.equal(h.command().palette, true);
+});
+
+test("falls back to the app slot before 2.0.23", async (t) => {
+  const h = harness(t, [], {}, "2.0.22");
   assert.equal(h.slot().append, "app", "the layer is registered from a mounted component");
   assert.equal(h.command().id, "opencode-fold-diffs.toggle");
   assert.equal(h.command().palette, true);
+});
+
+test("treats an unparseable version as an older build", async (t) => {
+  const h = harness(t, [], {}, null);
+  assert.equal(h.slot().append, "app");
 });
 
 test("listens for V2 transcript events, not the V1 names", async (t) => {
