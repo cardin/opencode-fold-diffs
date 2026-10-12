@@ -98,8 +98,7 @@ function writeBlock(lines = 40) {
   return { block: new Box([row, body]), row, body };
 }
 
-function harness(t, kids, options, version = "2.0.24") {
-  const root = new Box([new Scrollbox(kids)]);
+function harness(t, kids, options, version = "2.0.24", root = new Box([new Scrollbox(kids)])) {
   const listeners = {};
   const toasts = [];
   let slot;
@@ -395,6 +394,20 @@ test("folds nothing outside a session route", async (t) => {
   await settle();
 
   assert.equal(body.visible, true);
+});
+
+// V2 added a second sticky scrollbox: the shell output viewer dialog. It must
+// never be mistaken for the transcript, or a scan that hits it first would
+// latch onto the wrong tree and fold nothing.
+test("never mistakes the shell output viewer for the transcript", async (t) => {
+  const { block, body } = editBlock();
+  const viewer = new Scrollbox([]);
+  viewer.id = "shell-output-scroll";
+  const transcript = new Scrollbox([block]);
+  const h = harness(t, [], {}, "2.0.24", new Box([viewer, transcript]));
+  await settle();
+
+  assert.equal(body.visible, false, "the real transcript still folds");
 });
 
 // --- bash commands -------------------------------------------------------

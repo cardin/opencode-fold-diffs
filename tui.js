@@ -139,15 +139,20 @@ function bulk(node, found = []) {
   return found;
 }
 
-// The transcript is the only scrollbox in the TUI that asks to stick to the
-// bottom. Staying inside it is what keeps the permission dialog's diff preview
+// The session transcript is the scrollbox that sticks to the bottom. Since V2
+// the shell output viewer is also a sticky scrollbox, but it is a dialog and
+// must never be mistaken for the transcript, so it is excluded by id. Staying
+// inside the transcript is what keeps the permission dialog's diff preview
 // untouched -- you should always see in full what you are about to approve.
+const SHELL_VIEWER_ID = "shell-output-scroll";
+
 function isTranscript(node) {
   return (
     typeof node?.scrollTo === "function" &&
     typeof node?.scrollHeight === "number" &&
     node.stickyScroll === true &&
-    node.stickyStart === "bottom"
+    node.stickyStart === "bottom" &&
+    node.id !== SHELL_VIEWER_ID
   );
 }
 
