@@ -13,7 +13,7 @@
 // expand  src/app.ts" -- and opens on click, or with the optional `key`
 // binding for every block at once.
 //
-// Options (cli.json -> ["opencode-fold-diffs", { ... }] or opencode.json(c)):
+// Options (cli.json -> { "package": "@cardinal4/opencode-fold-diffs", "options": { ... } }):
 //   lines      lines of the body left visible when folded  (default 0, title only)
 //   min_lines  leave blocks with fewer content lines alone  (default 6)
 //   stats      append "40 lines · click to expand" to the header (default true)
@@ -51,8 +51,9 @@ const DEFAULTS = {
 
 // Header labels of the file-writing tools, as V2 renders them. Unlike V1, V2
 // splits a block header into a label text node ("# Wrote", "← Edit", ...) and a
-// separate path node, so these match the label alone. The trailing alternation
-// keeps a header that already carries the stats suffix matching on later scans.
+// separate path node, so these match the label alone. The stats suffix a folded
+// header carries is stripped by baseLabel() before matching, so re-adopting a
+// block on a later scan is idempotent.
 const LABELS = ["# Wrote", "← Edit", "← Patched", "# Created", "# Deleted", "# Moved"];
 
 function isLabel(text) {
@@ -91,9 +92,9 @@ function plain(node) {
 // @opentui/core and are minified, so their names are not stable. A diff
 // renderable is the only thing in the tree carrying a `diff` string. A code
 // renderable is the only thing whose `content` is a string -- text renderables
-// carry a styled-text `content` object and expose `plainText` instead. OpenCode
-// 2.0.16 stopped setting `filetype` on a written file's body, so it must not be
-// required (requiring it silently stopped every write block from folding).
+// carry a styled-text `content` object and expose `plainText` instead. Never key
+// off `filetype`: OpenCode stopped setting it in 2.0.16 and restored it in
+// 2.0.27, and requiring it silently stopped every write block from folding.
 function isDiff(node) {
   return typeof node?.diff === "string";
 }
