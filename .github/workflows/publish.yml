@@ -1,0 +1,84 @@
+# Publishes the package to npm when a GitHub Release is published.
+#
+# Auth is npm Trusted Publishing (OIDC): no NPM_TOKEN secret, no OTP. It needs a
+# one-time setup on npmjs.com — package @cardinal4/opencode-fold-diffs ->
+# Settings -> Trusted Publisher -> GitHub Actions, with:
+#
+#     Organization or user: cardin
+#     Repository:           opencode-fold-diffs
+#     Workflow filename:    publish.yml
+#     Environment:          (leave empty)
+#
+# The workflow filename must match this file's name exactly. Trusted Publishing
+# also requires package.json's `repository.url` to point at this GitHub repo.
+#
+# Release flow:
+#   1. Bump `version` in package.json and commit it, e.g.
+#        npm version patch --no-git-tag-version
+#   2. Push the commit to main.
+#   3. Create a GitHub Release with the matching tag, e.g.
+#        gh release create v0.3.6 --generate-notes
+#      Publishing the release runs this workflow: it checks the tag against
+#      package.json, runs the tests, and publishes with provenance.
+
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing needs npm >= 11.5.1.
+      - name: Use the latest npm
+        run: npm install --global npm@latest
+
+      - name: Check the release tag matches package.json
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::release tag '$TAG' does not match package.json version 'v$version'"
+            exit 1
+          fi
+          echo "Tag v$version matches package.json"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check npm for an existing version
+        id: exists
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$version is already on npm; skipping publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.exists.outputs.published == 'false'
+        run: npm publish --provenance --access public
