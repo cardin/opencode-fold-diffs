@@ -221,7 +221,8 @@ function summarise(nodes) {
       }
       continue;
     }
-    lines += node.content.split("\n").length;
+    const content = node.content.endsWith("\n") ? node.content.slice(0, -1) : node.content;
+    lines += content === "" ? 0 : content.split("\n").length;
   }
   if (diffs) return { size: added + removed, label: `+${added} −${removed}` };
   return { size: lines, label: `${lines} ${lines === 1 ? "line" : "lines"}` };
@@ -271,6 +272,10 @@ export default {
     // Folded blocks, by their block renderable. WeakMap so a session switch,
     // which destroys the renderables, drops the state with them.
     const known = new WeakMap();
+    // WeakMap has no iterator, so keep a strong set of adopted blocks only for
+    // cleanup. Destroyed blocks are pruned on the sweep to avoid retaining a
+    // closed session's renderables.
+    const adopted = new Set();
     // The mode new blocks adopt. ctrl+o flips it, so "expand everything" also
     // means "and stop folding what arrives next", the way a verbose toggle works.
     let folding = opts.folded !== false;
@@ -356,6 +361,7 @@ export default {
         folded: false,
       };
       known.set(block, state);
+      adopted.add(block);
 
       block.onMouseUp = () => {
         // Copy-on-select is a drag ending on the block; that is not a click.
@@ -382,6 +388,7 @@ export default {
         folded: false,
       };
       known.set(block, state);
+      adopted.add(block);
 
       // The block's own onMouseUp belongs to the host here -- it is what expands
       // the collapsed command/output -- and opentui declares the handler as a
@@ -404,6 +411,7 @@ export default {
     }
 
     function sweep() {
+      for (const block of adopted) if (block.isDestroyed) adopted.delete(block);
       if (context.ui.router.current().type !== "session") return;
       const box = transcript();
       if (!box) return;
@@ -515,8 +523,10 @@ export default {
                 if (target) {
                   const lines = [];
                   dumpNode(box ?? context.renderer.root, 0, lines, 600);
-                  dump = target;
                   writeFileSync(target, summary.concat("", lines).join("\n"));
+                  // Only advertise the path once the write succeeded; the
+                  // catch below keeps a failed write from taking down diagnose.
+                  dump = target;
                 }
               } catch {}
               context.ui.toast.show({
@@ -550,6 +560,13 @@ export default {
       clearInterval(timer);
       if (pending) clearTimeout(pending);
       for (const off of offs) if (typeof off === "function") off();
+      // The host owns these renderables and keeps them after the plugin is
+      // disabled, so undo our folds instead of leaving the transcript collapsed.
+      for (const block of adopted) {
+        const state = known.get(block);
+        if (state?.folded) apply(state, false);
+      }
+      adopted.clear();
     };
   },
 };

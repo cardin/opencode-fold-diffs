@@ -145,6 +145,9 @@ function harness(t, kids, options, version = "2.0.24", root = new Box([new Scrol
     run: () => layer.commands[0].run(),
     command: () => layer.commands[0],
     commands: () => layer.commands,
+    cleanup: async () => {
+      if (typeof cleanup === "function") await cleanup();
+    },
   };
 }
 
@@ -171,6 +174,30 @@ test("counts written files in lines", async (t) => {
 
   assert.equal(body.visible, false);
   assert.equal(row.kids[0].plainText, "# Wrote 40 lines · click to expand");
+});
+
+test("does not count a trailing newline as an extra line", async (t) => {
+  const content = Array.from({ length: 6 }, (_, i) => `line ${i}`).join("\n") + "\n";
+  const row = header("# Wrote", "src/new.ts");
+  const body = new Box([new Code(content)]);
+  const block = new Box([row, body]);
+  const h = harness(t, [block]);
+  await settle();
+
+  assert.equal(body.visible, false);
+  assert.equal(row.kids[0].plainText, "# Wrote 6 lines · click to expand");
+});
+
+test("cleanup restores the blocks it folded", async (t) => {
+  const { block, body } = editBlock();
+  const h = harness(t, [block]);
+  await settle();
+  assert.equal(body.visible, false);
+
+  await h.cleanup();
+  assert.equal(body.visible, true, "disabling the plugin must not leave a block folded");
+  assert.equal(block.gap, 1);
+  assert.equal(block.paddingTop, 1);
 });
 
 test("click toggles one block, restoring the host's chrome", async (t) => {
