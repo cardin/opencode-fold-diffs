@@ -24,6 +24,7 @@
   "files": [
     "index.js",
     "tui.js",
+    "rpc.js",
     "README.md",
     "LICENSE"
   ],
@@ -44,8 +45,5 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "engines": {
-    "opencode": ">=2.0.0"
   }
 }
