@@ -983,7 +983,7 @@ test("ctrl+o folds and unfolds commands alongside diffs", async (t) => {
   assert.equal(shell.cmd.maxHeight, 1);
 });
 
-test("package declares no non-standard opencode engine", () => {
+test("package declares the OpenCode major it targets", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(pkg.engines?.opencode, undefined);
+  assert.equal(pkg.engines?.opencode, ">=2.0.10");
 });

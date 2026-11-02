@@ -1,6 +1,6 @@
 {
   "name": "@cardinal4/opencode-fold-diffs",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Unofficial OpenCode V2 fork of opencode-fold-diffs: write, edit and apply_patch blocks render folded to their header line, click to expand.",
   "license": "MIT",
   "type": "module",
@@ -45,5 +45,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "engines": {
+    "opencode": ">=2.0.10"
   }
 }
