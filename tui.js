@@ -89,6 +89,10 @@ const SWEEP_MS = 5000;
 const EDGE_TOP = 1;
 const EDGE_BOTTOM = 3;
 const GUTTER_ROW = 1;
+const UNIT_UNDEFINED = 0;
+const UNIT_POINT = 1;
+const UNIT_PERCENT = 2;
+const UNIT_AUTO = 3;
 
 // Scrollboxes that belong to the host's panels and dialogs rather than to the
 // transcript. The shell viewer is the important one: since V2 it is also a
@@ -160,6 +164,65 @@ function contentLines(content) {
 function isDiffHeader(line) {
   if (!line.startsWith("+++ ") && !line.startsWith("--- ")) return false;
   return line.slice(4).trim().length > 0;
+}
+
+const HUNK_HEADER = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+
+// Count added/removed lines with hunk ranges. That is what makes a `---` or
+// `+++` line unambiguous: inside a hunk it is content, outside it is a file
+// header. A pair at the top of a diff without hunk headers is still treated as
+// the file header, but later pairs are counted as the content they are.
+function countDiffLines(text) {
+  let added = 0;
+  let removed = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
+  let headerSeen = false;
+  let hunkSeen = false;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const hunk = HUNK_HEADER.exec(line);
+    if (hunk) {
+      hunkSeen = true;
+      oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]);
+      newLeft = hunk[2] === undefined ? 1 : Number(hunk[2]);
+      continue;
+    }
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith("\\")) continue;
+      if (line.startsWith("+")) {
+        added++;
+        if (newLeft > 0) newLeft--;
+      } else if (line.startsWith("-")) {
+        removed++;
+        if (oldLeft > 0) oldLeft--;
+      } else {
+        if (oldLeft > 0) oldLeft--;
+        if (newLeft > 0) newLeft--;
+      }
+      continue;
+    }
+    // Outside a hunk: the first ---/+++ pair is a file header. Later pairs
+    // need a completed hunk to prove they are a new file rather than content
+    // in a headerless diff.
+    const next = lines[i + 1];
+    if (
+      (!headerSeen || hunkSeen) &&
+      line.startsWith("--- ") &&
+      isDiffHeader(line) &&
+      next &&
+      isDiffHeader(next) &&
+      next.startsWith("+++ ")
+    ) {
+      headerSeen = true;
+      i++;
+      continue;
+    }
+    if (line.startsWith("+")) added++;
+    else if (line.startsWith("-")) removed++;
+  }
+  return { added, removed };
 }
 
 // The command text of a bash block, or nothing. V2 wraps the command and its
@@ -329,30 +392,9 @@ function summarise(nodes) {
     if (!node || node.isDestroyed) continue;
     if (isDiff(node)) {
       diffs++;
-      const lines = node.diff.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // A file header is the marker plus a path, and the --- / +++ pair is
-        // what distinguishes it from a content line that merely starts with
-        // the same characters.
-        if (isDiffHeader(line)) {
-          const previous = lines[i - 1];
-          const next = lines[i + 1];
-          if (line.startsWith("--- ") && next && isDiffHeader(next) && next.startsWith("+++ ")) {
-            continue;
-          }
-          if (
-            line.startsWith("+++ ") &&
-            previous &&
-            isDiffHeader(previous) &&
-            previous.startsWith("--- ")
-          ) {
-            continue;
-          }
-        }
-        if (line.startsWith("+")) added++;
-        else if (line.startsWith("-")) removed++;
-      }
+      const stats = countDiffLines(node.diff);
+      added += stats.added;
+      removed += stats.removed;
       continue;
     }
     lines += contentLines(textValue(node) ?? "");
@@ -367,32 +409,58 @@ function summarise(nodes) {
 // actually set instead of assuming BlockTool's values, then put it back when a
 // block unfolds or the plugin is disabled.
 
-function readStyle(node, getter, args, property, fallback) {
+const NO_STYLE = Symbol("no-style");
+
+// OpenTUI 0.8 getters return a Yoga Value ({ unit, value }); the matching
+// setters accept only a number, a percentage string, or undefined. Assigning
+// the Value object back would be silently ignored, so unwrap it before it is
+// stored as the host's original style.
+function toStyleValue(value) {
+  if (value && typeof value === "object" && "unit" in value && "value" in value) {
+    switch (value.unit) {
+      case UNIT_POINT:
+        return value.value;
+      case UNIT_PERCENT:
+        return `${value.value}%`;
+      case UNIT_AUTO:
+        return "auto";
+      default:
+        return undefined;
+    }
+  }
+  return value === null ? undefined : value;
+}
+
+function readStyle(node, getter, args, property) {
   try {
     if (typeof node?.[getter] === "function") {
-      const value = node[getter](...args);
-      if (value !== undefined) return value;
+      const raw = node[getter](...args);
+      if (raw !== undefined) return toStyleValue(raw);
     }
   } catch {}
   try {
-    const value = node?.[property];
-    if (value !== undefined) return value;
+    const raw = node?.[property];
+    if (raw !== undefined) return toStyleValue(raw);
   } catch {}
-  return fallback;
+  return NO_STYLE;
 }
 
 function maxHeightOf(node, fallback) {
-  const value = readStyle(node, "getMaxHeight", [], "maxHeight", fallback);
-  // "auto" is the unset value in Yoga. For a shell command the host's real
-  // clamp (two rows) is the better restore point than an explicit auto.
-  return value === "auto" ? fallback : value;
+  const value = readStyle(node, "getMaxHeight", [], "maxHeight");
+  // "auto" and an unset Yoga value are both better represented by the caller's
+  // restore point than by a value the setter cannot apply back.
+  return value === NO_STYLE || value === undefined || value === "auto" ? fallback : value;
 }
 
 function chromeOf(node) {
+  const gap = readStyle(node, "getGap", [GUTTER_ROW], "gap");
+  const paddingTop = readStyle(node, "getPadding", [EDGE_TOP], "paddingTop");
+  const paddingBottom = readStyle(node, "getPadding", [EDGE_BOTTOM], "paddingBottom");
   return {
-    gap: readStyle(node, "getGap", [GUTTER_ROW], "gap", 1),
-    paddingTop: readStyle(node, "getPadding", [EDGE_TOP], "paddingTop", 1),
-    paddingBottom: readStyle(node, "getPadding", [EDGE_BOTTOM], "paddingBottom", 1),
+    gap: gap === NO_STYLE ? 1 : gap === "auto" ? undefined : gap,
+    paddingTop: paddingTop === NO_STYLE ? 1 : paddingTop === "auto" ? undefined : paddingTop,
+    paddingBottom:
+      paddingBottom === NO_STYLE ? 1 : paddingBottom === "auto" ? undefined : paddingBottom,
   };
 }
 

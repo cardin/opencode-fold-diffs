@@ -16,41 +16,81 @@ class Box {
   constructor(kids = [], props = {}) {
     this.kids = kids;
     this.visible = true;
-    Object.assign(this, props);
-    // The real renderables expose setter-only props in older OpenTUI builds
-    // and style getters in 0.8. Keep the original style separate from the
-    // plain writable props so the plugin's restore path can be exercised.
-    this._maxHeight = props.maxHeight;
-    this._gap = props.gap;
-    this._paddingTop = props.paddingTop;
-    this._paddingBottom = props.paddingBottom;
+    const { maxHeight, gap, paddingTop, paddingBottom, ...rest } = props;
+    Object.assign(this, rest);
+    // OpenTUI 0.8 getters return { unit, value }; its setters accept only a
+    // number, a percentage string, or undefined. Keep the original style apart
+    // from the applied value so the restore path is exercised faithfully.
+    this._style = {
+      maxHeight,
+      gap: gap === undefined ? 1 : gap,
+      paddingTop: paddingTop === undefined ? 1 : paddingTop,
+      paddingBottom: paddingBottom === undefined ? 1 : paddingBottom,
+    };
+    this._applied = { ...this._style };
     for (const kid of kids) kid.parent = this;
   }
   getChildren() {
     return this.kids;
   }
   getMaxHeight() {
-    return this._maxHeight;
+    return this._style.maxHeight === undefined
+      ? { unit: UNIT_UNDEFINED, value: Number.NaN }
+      : { unit: UNIT_POINT, value: this._style.maxHeight };
   }
   getGap() {
-    return this._gap;
+    return { unit: UNIT_POINT, value: this._style.gap };
   }
   getPadding(edge) {
-    if (edge === 1) return this._paddingTop;
-    if (edge === 3) return this._paddingBottom;
-    return undefined;
+    if (edge === 1) return { unit: UNIT_POINT, value: this._style.paddingTop };
+    if (edge === 3) return { unit: UNIT_POINT, value: this._style.paddingBottom };
+    return { unit: UNIT_UNDEFINED, value: Number.NaN };
+  }
+  get maxHeight() {
+    return this._applied.maxHeight;
+  }
+  set maxHeight(value) {
+    if (!acceptsSize(value)) return;
+    this._applied.maxHeight = value;
+  }
+  get gap() {
+    return this._applied.gap;
+  }
+  set gap(value) {
+    if (!acceptsGap(value)) return;
+    this._applied.gap = value;
+  }
+  get paddingTop() {
+    return this._applied.paddingTop;
+  }
+  set paddingTop(value) {
+    if (!acceptsGap(value)) return;
+    this._applied.paddingTop = value;
+  }
+  get paddingBottom() {
+    return this._applied.paddingBottom;
+  }
+  set paddingBottom(value) {
+    if (!acceptsGap(value)) return;
+    this._applied.paddingBottom = value;
   }
 }
 
+const UNIT_UNDEFINED = 0;
+const UNIT_POINT = 1;
+const acceptsSize = (value) =>
+  value === undefined ||
+  (typeof value === "number" && !Number.isNaN(value)) ||
+  (typeof value === "string" && value.endsWith("%"));
+const acceptsGap = acceptsSize;
+
 // Text renderables expose plainText for reading and content for writing, which
 // is the pair the plugin uses to restate a folded header's label.
-class Text {
+class Text extends Box {
   constructor(text, props = {}) {
+    super([], props);
     this._text = text;
-    this.visible = true;
-    this._maxHeight = props.maxHeight;
     this._frozen = props.frozen === true;
-    Object.assign(this, props);
   }
   get plainText() {
     return this._text;
@@ -58,9 +98,6 @@ class Text {
   set content(value) {
     if (this._frozen) return;
     this._text = value;
-  }
-  getMaxHeight() {
-    return this._maxHeight;
   }
   getChildren() {
     return [];
@@ -270,6 +307,48 @@ test("does not mistake diff content starting with --- or +++ for file headers", 
   assert.equal(row.kids[0].plainText, "← Edit +6 −2 · click to expand");
 });
 
+test("counts replaced content lines that look like file headers", async (t) => {
+  // A replacement in a hunk where the removed line starts "-- " and the added
+  // line starts "++ " renders as an adjacent ---/+++ pair. It is content, not
+  // a file header, and must still count toward the fold threshold.
+  const diff = [
+    "--- a/notes.md",
+    "+++ b/notes.md",
+    "@@ -1,3 +1,3 @@",
+    "--- alpha old",
+    "+++ beta new",
+    "--- gamma old",
+    "+++ delta new",
+    "--- epsilon old",
+    "+++ zeta new",
+  ].join("\n");
+  const { block, row, body } = editBlock("← Edit", "notes.md", diff);
+  const h = await harness(t, [block]);
+  await settle();
+
+  assert.equal(body.visible, false, "six changed lines meet the default floor");
+  assert.equal(row.kids[0].plainText, "← Edit +3 −3 · click to expand");
+});
+
+test("counts later --- and +++ content pairs in a diff without hunk headers", async (t) => {
+  const diff = [
+    "--- a/notes.md",
+    "+++ b/notes.md",
+    "--- alpha old",
+    "+++ beta new",
+    "--- gamma old",
+    "+++ delta new",
+    "--- epsilon old",
+    "+++ zeta new",
+  ].join("\n");
+  const { block, row, body } = editBlock("← Edit", "notes.md", diff);
+  const h = await harness(t, [block]);
+  await settle();
+
+  assert.equal(body.visible, false);
+  assert.equal(row.kids[0].plainText, "← Edit +3 −3 · click to expand");
+});
+
 test("cleanup restores the blocks it folded", async (t) => {
   const { block, body } = editBlock();
   const h = await harness(t, [block]);
@@ -394,7 +473,19 @@ test("lines: n leaves a peek and keeps the block's padding", async (t) => {
 
   assert.equal(body.visible, true);
   assert.equal(body.maxHeight, 3);
-  assert.equal(block.gap, undefined, "chrome is only tightened for a title-only fold");
+  assert.equal(block.gap, 1, "chrome is only tightened for a title-only fold");
+});
+
+test("unfolding a peek restores the host's maxHeight", async (t) => {
+  const row = header("← Edit", "src/app.ts");
+  const body = new Box([new Diff(DIFF)], { maxHeight: 7 });
+  const block = new Box([row, body]);
+  const h = await harness(t, [block], { lines: 3 });
+  await settle();
+
+  assert.equal(body.maxHeight, 3);
+  block.onMouseUp();
+  assert.equal(body.maxHeight, 7, "the host's maxHeight comes back after unfold");
 });
 
 test("folded: false only installs the toggle", async (t) => {
@@ -876,7 +967,7 @@ test("folds a long bash command to its first row when enabled", async (t) => {
   // chain, so it must be left exactly as it was found.
   assert.equal(block.onMouseUp, undefined);
   // The chrome holds up the output, so it is not collapsed the way a diff's is.
-  assert.equal(block.gap, undefined);
+  assert.equal(block.gap, 1);
 });
 
 test("clicking the command toggles it and stops the host seeing the click", async (t) => {
