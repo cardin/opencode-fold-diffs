@@ -4,7 +4,7 @@
 // value, followed by the body children the host builds for edit / write /
 // apply_patch.
 //
-//   node --test test/
+//   npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -181,16 +181,14 @@ async function harness(
   t,
   kids,
   options,
-  version = "2.0.24",
   root = new Box([new Scrollbox(kids)]),
   extra = {},
 ) {
   const listeners = {};
   const toasts = [];
-  let slot;
   let layer;
   const context = {
-    app: { version },
+    app: { version: "2.4.0" },
     options: options ?? {},
     renderer: { root, getSelection: () => undefined },
     data: {
@@ -207,27 +205,15 @@ async function harness(
     ui: {
       router: { current: () => ({ type: "session", sessionID: "s" }) },
       toast: { show: (input) => toasts.push(input) },
-      // On pre-2.0.23 builds the host mounts the plugin's slot, and rendering
-      // it is what registers the keymap layer; 2.0.23+ registers in setup.
-      slot(claim) {
-        slot = claim;
-        return () => {};
-      },
     },
     ...extra,
   };
   const cleanup = await plugin.setup(context);
   if (typeof cleanup === "function") t.after(cleanup);
-  // Render the fallback component, if this version uses one, so the layer is
-  // registered either way before the test runs.
-  const mount = () => slot?.render();
-  mount();
   return {
     context,
     toasts,
     events: () => Object.keys(listeners),
-    slot: () => slot,
-    mount,
     fire: (name) => listeners[name]?.(),
     run: () => layer.commands[0].run(),
     command: () => layer.commands[0],
@@ -524,23 +510,10 @@ test("binds nothing by default and only what it is asked to", async (t) => {
   assert.equal(b.command().bind, "ctrl+shift+d");
 });
 
-test("registers the command layer from setup on 2.0.23+", async (t) => {
+test("registers the command layer from setup", async (t) => {
   const h = await harness(t, []);
-  assert.equal(h.slot(), undefined, "no app slot is needed");
   assert.equal(h.command().id, "opencode-fold-diffs.toggle");
   assert.equal(h.command().palette, true);
-});
-
-test("falls back to the app slot before 2.0.23", async (t) => {
-  const h = await harness(t, [], {}, "2.0.22");
-  assert.equal(h.slot().append, "app", "the layer is registered from a mounted component");
-  assert.equal(h.command().id, "opencode-fold-diffs.toggle");
-  assert.equal(h.command().palette, true);
-});
-
-test("treats an unparseable version as an older build", async (t) => {
-  const h = await harness(t, [], {}, null);
-  assert.equal(h.slot().append, "app");
 });
 
 test("listens for V2 transcript events, not the V1 names", async (t) => {
@@ -647,7 +620,7 @@ test("merges server options with cli.json taking precedence", async (t) => {
     },
   };
   const { block, row, body } = editBlock();
-  const h = await harness(t, [block], { lines: 2 }, "2.0.24", undefined, { client });
+  const h = await harness(t, [block], { lines: 2 }, undefined, { client });
   await settle();
 
   assert.equal(body.maxHeight, 2, "cli.json lines wins over the server value");
@@ -658,7 +631,7 @@ test("merges server options with cli.json taking precedence", async (t) => {
 
 test("falls back to cli.json options when the server bridge is unavailable", async (t) => {
   const { block, body } = editBlock();
-  const h = await harness(t, [block], { lines: 3 }, "2.0.24", undefined, {
+  const h = await harness(t, [block], { lines: 3 }, undefined, {
     client: { rpc: () => ({ get: async () => Promise.reject(new Error("rpc.unavailable")) }) },
   });
   await settle();
@@ -684,7 +657,7 @@ test("never mistakes the shell output viewer for the transcript", async (t) => {
   const viewer = new Scrollbox([]);
   viewer.id = "shell-output-scroll";
   const transcript = new Scrollbox([block]);
-  const h = await harness(t, [], {}, "2.0.24", new Box([viewer, transcript]));
+  const h = await harness(t, [], {}, new Box([viewer, transcript]));
   await settle();
 
   assert.equal(body.visible, false, "the real transcript still folds");
@@ -697,7 +670,7 @@ test("finds a scrolled-up transcript by its bottom anchor and session parts", as
   const { block, body } = editBlock();
   block.id = "session-part:msg_1:part_1";
   const scroll = new Scrollbox([block], { stickyScroll: false });
-  const h = await harness(t, [], {}, "2.0.24", new Box([scroll]));
+  const h = await harness(t, [], {}, new Box([scroll]));
   await settle();
 
   assert.equal(body.visible, false);
@@ -706,7 +679,7 @@ test("finds a scrolled-up transcript by its bottom anchor and session parts", as
 test("a non-sticky scrollbox without session evidence is not the transcript", async (t) => {
   const { block, body } = editBlock();
   const scroll = new Scrollbox([block], { stickyScroll: false });
-  const h = await harness(t, [], {}, "2.0.24", new Box([scroll]));
+  const h = await harness(t, [], {}, new Box([scroll]));
   await settle();
 
   assert.equal(body.visible, true);
@@ -720,7 +693,7 @@ test("does not latch onto the first sticky scrollbox", async (t) => {
   const { block, body } = editBlock();
   block.id = "session-part:msg_1:part_1";
   const real = new Scrollbox([block], { scrollHeight: 20 });
-  const h = await harness(t, [], {}, "2.0.24", new Box([decoy, real]));
+  const h = await harness(t, [], {}, new Box([decoy, real]));
   await settle();
 
   assert.equal(body.visible, false);
@@ -733,7 +706,7 @@ test("drops the cached transcript when the session route changes", async (t) => 
   const one = new Scrollbox([first.block], { scrollHeight: 200 });
   const two = new Scrollbox([second.block], { scrollHeight: 100 });
   const root = new Box([one, two]);
-  const h = await harness(t, [], {}, "2.0.24", root);
+  const h = await harness(t, [], {}, root);
   await settle();
   assert.equal(first.body.visible, false);
   assert.equal(second.body.visible, true);
@@ -756,7 +729,7 @@ test("re-finds the transcript when the cached one is detached", async (t) => {
   const one = new Scrollbox([first.block]);
   const two = new Scrollbox([second.block]);
   const root = new Box([one, two]);
-  const h = await harness(t, [], {}, "2.0.24", root);
+  const h = await harness(t, [], {}, root);
   await settle();
   assert.equal(first.body.visible, false);
 
@@ -1043,6 +1016,54 @@ test("bash_lines sets how much of the command survives", async (t) => {
   assert.equal(cmd.maxHeight, 3);
 });
 
+test("bash_output folds the output, the hint and the chrome too", async (t) => {
+  const { block, cmd, wrap } = shellBlock();
+  const h = await harness(t, [block], { bash: true, bash_output: true });
+  await settle();
+
+  assert.equal(cmd.maxHeight, 1);
+  assert.equal(wrap.kids[1].visible, false);
+  assert.equal(wrap.kids[2].visible, false);
+  assert.equal(wrap.gap, 0);
+  assert.equal(block.gap, 0);
+  assert.equal(block.paddingTop, 0);
+  assert.equal(block.paddingBottom, 0);
+  assert.equal(block.onMouseUp, undefined);
+
+  cmd.onMouseUp(click());
+  assert.equal(cmd.maxHeight, 2, "the host's clamp comes back after unfold");
+  assert.equal(wrap.kids[1].visible, true);
+  assert.equal(wrap.kids[2].visible, true);
+  assert.equal(wrap.gap, 1);
+  assert.equal(block.gap, 1);
+  assert.equal(block.paddingTop, 1);
+});
+
+test("bash_output leaves an error line outside the wrapper visible", async (t) => {
+  const { block, wrap } = shellBlock();
+  const error = new Text("exit code 1");
+  block.kids.push(error);
+  const h = await harness(t, [block], { bash: true, bash_output: true });
+  await settle();
+
+  assert.equal(wrap.kids[1].visible, false);
+  assert.equal(error.visible, true);
+});
+
+test("bash_min_lines overrides min_lines for commands only", async (t) => {
+  const short = shellBlock({ lines: 1 });
+  const small = editBlock(
+    "← Edit",
+    "src/tiny.ts",
+    ["--- a/src/tiny.ts", "+++ b/src/tiny.ts", "-a", "+b"].join("\n"),
+  );
+  const h = await harness(t, [short.block, small.block], { bash: true, bash_min_lines: 0 });
+  await settle();
+
+  assert.equal(short.cmd.maxHeight, 1);
+  assert.equal(small.body.maxHeight, undefined);
+});
+
 test("bash cleanup restores the host's two-row clamp and clears the handler", async (t) => {
   const { block, cmd } = shellBlock({ maxHeight: 2 });
   const h = await harness(t, [block], { bash: true });
@@ -1076,5 +1097,5 @@ test("ctrl+o folds and unfolds commands alongside diffs", async (t) => {
 
 test("package declares the OpenCode major it targets", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(pkg.engines?.opencode, ">=2.0.10");
+  assert.equal(pkg.engines?.opencode, ">=2.0.23");
 });

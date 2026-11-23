@@ -24,6 +24,8 @@
 //   key        binding that folds/unfolds every block        (default "", none)
 //   bash       fold long bash commands too                   (default false on V2)
 //   bash_lines rows of the command left visible when folded  (default 1)
+//   bash_min_lines  leave commands shorter than this alone   (default min_lines)
+//   bash_output     fold the output and the hint too         (default false)
 //
 // The plugin is loaded by the OpenCode V2 CLI from the package's "./tui" export
 // and receives a plugin Context (see @opencode/plugin/tui). It exports a plain
@@ -48,6 +50,8 @@ const DEFAULTS = {
   // gap it was in V1. Off by default; turn on to tighten it to one line.
   bash: false,
   bash_lines: 1,
+  // Fold the command's output and hint as well; see the README.
+  bash_output: false,
   // Where "Fold diffs: diagnose" writes its tree dump. "" is the default
   // (/tmp/opencode-fold-diffs-tree.txt); false turns the dump off.
   dump: "",
@@ -242,7 +246,7 @@ function shellCommand(block) {
     for (const node of inner) {
       const text = plain(node);
       if (typeof text === "string") {
-        return text.startsWith(PROMPT) ? { node, text } : undefined;
+        return text.startsWith(PROMPT) ? { node, text, box: child } : undefined;
       }
       // A spinner/command row is a box, not a leaf placeholder. Wait for a
       // later sweep, once the command is rendered as text with its prompt.
@@ -535,16 +539,6 @@ function dumpNode(node, depth, lines, limit) {
   for (const kid of kids) dumpNode(kid, depth + 1, lines, limit);
 }
 
-// 2.0.23 was the first V2 release whose `keymap.layer` may be called from
-// setup; before that it reads Solid context and needs a mounted component.
-// An unparseable version takes the fallback, which works on every V2 build.
-function supportsSetupKeymap(version) {
-  const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
-  if (!match) return false;
-  const [major, minor, patch] = match.slice(1).map(Number);
-  return major > 2 || (major === 2 && (minor > 0 || patch >= 23));
-}
-
 export const PLUGIN_ID = "opencode-fold-diffs";
 
 export default {
@@ -559,6 +553,11 @@ export default {
     const floor = integerOption(opts.min_lines, DEFAULTS.min_lines);
     const shell = opts.bash === true;
     const shellPeek = integerOption(opts.bash_lines, DEFAULTS.bash_lines);
+    // An explicit bash_min_lines overrides min_lines for commands only. Left
+    // unset by default so commands keep sharing min_lines.
+    const shellFloor =
+      opts.bash_min_lines === undefined ? floor : integerOption(opts.bash_min_lines, 0);
+    const shellOutput = opts.bash_output === true;
     const key = typeof opts.key === "string" ? opts.key : "";
 
     // Folded state by stable part id, so a block that is remounted keeps the
@@ -658,14 +657,15 @@ export default {
       // With the body at zero height the block's own padding and the gap it
       // keeps between children are all that is left. Collapse the chrome too so
       // a folded block reads as the single row it now is, restoring exactly the
-      // values the host had rather than BlockTool's assumed 1/1/1. Never for a
-      // shell block: its output is a sibling of the command and stays on screen,
-      // so the chrome is still holding something up.
+      // values the host had rather than BlockTool's assumed 1/1/1. A shell block
+      // only collapses its chrome when its output folds with the command: until
+      // then the output is still on screen and holding the chrome up.
       if (state.chrome) {
         try {
           state.block.gap = fold ? 0 : state.chromeStyle.gap;
           state.block.paddingTop = fold ? 0 : state.chromeStyle.paddingTop;
           state.block.paddingBottom = fold ? 0 : state.chromeStyle.paddingBottom;
+          if (state.inner) state.inner.gap = fold ? 0 : state.innerGap;
         } catch {}
       }
       // Restore the label even after `titles` was turned off globally: a block
@@ -749,23 +749,34 @@ export default {
     function adoptShell(block) {
       const found = shellCommand(block);
       if (!found) return false;
-      if (commandRows(found.node, found.text) < floor) return false;
+      if (commandRows(found.node, found.text) < shellFloor) return false;
 
+      // With bash_output the command, its output and the host's "Click to
+      // expand" hint fold together, and the wrapper's gap plus the block's
+      // chrome collapse, so a finished command takes one row. An error line is
+      // a sibling of the wrapper, not inside it, so a failed command still says
+      // so while folded.
+      const kids = children(found.box);
+      const after = kids.indexOf(found.node);
+      const body =
+        shellOutput && after >= 0 ? [found.node, ...kids.slice(after + 1)] : [found.node];
       const state = {
         block,
-        body: [found.node],
-        visible: [found.node.visible],
+        body,
+        visible: body.map((node) => node.visible),
         // The host clamps a running/long command to two rows. If the getter is
         // unavailable, two is still a better restore point than undefined.
-        maxHeight: [maxHeightOf(found.node, 2)],
-        overflow: [found.node.overflow],
+        maxHeight: body.map((node, index) => maxHeightOf(node, index === 0 ? 2 : undefined)),
+        overflow: body.map((node) => node.overflow),
         title: undefined,
         text: "",
         suffix: "",
         signature: "",
         peek: shellPeek,
-        chrome: false,
-        chromeStyle: undefined,
+        chrome: shellOutput,
+        chromeStyle: shellOutput ? chromeOf(block) : undefined,
+        inner: shellOutput ? found.box : undefined,
+        innerGap: shellOutput ? chromeOf(found.box).gap : undefined,
         folded: false,
         titleChanged: false,
         key: stableKey(block),
@@ -878,10 +889,8 @@ export default {
     const timer = setInterval(sweep, SWEEP_MS);
     schedule();
 
-    // The command layer itself is identical everywhere; only who registers it
-    // differs. 2.0.23+ runs `keymap.layer` from setup and owns its teardown.
-    // Older V2 reads Solid context when registering, so there the layer has to
-    // be created by a mounted component. The `app` slot supplies one.
+    // The command layer is registered from setup on every V2 release this
+    // package targets (>=2.0.23); the host owns its teardown with the plugin.
     function registerCommands() {
       context.keymap.layer(() => ({
         mode: "global",
@@ -967,28 +976,16 @@ export default {
         bindings: key ? ["opencode-fold-diffs.toggle"] : [],
       }));
     }
-    let stopCommands = () => {};
-    const registerCommandsSafely = () => {
-      try {
-        registerCommands();
-      } catch {}
-    };
-    if (supportsSetupKeymap(context.app?.version)) {
-      registerCommandsSafely();
-    } else {
-      function FoldCommands() {
-        registerCommandsSafely();
-        return null;
-      }
-      try {
-        stopCommands = context.ui.slot({ append: "app", render: () => FoldCommands() });
-      } catch {}
-    }
+    // The command layer is part of the plugin's setup; the host disposes it
+    // with the plugin. V2 releases older than 2.0.23 need a mounted component
+    // here, which is below the major this package targets (package.json).
+    try {
+      registerCommands();
+    } catch {}
 
     return () => {
       if (disposed) return;
       disposed = true;
-      if (typeof stopCommands === "function") stopCommands();
       clearInterval(timer);
       if (pending) {
         clearTimeout(pending);

@@ -48,6 +48,6 @@
     "access": "public"
   },
   "engines": {
-    "opencode": ">=2.0.10"
+    "opencode": ">=2.0.23"
   }
 }
